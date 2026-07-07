@@ -51,13 +51,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          APK=$(ls manager/build/outputs/apk/debug/*.apk | head -n1)
-          echo "Publishing $APK as release fix-201"
+          SRC_APK=$(ls manager/build/outputs/apk/debug/*.apk | head -n1)
+          SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-10)
+          RENAMED_APK="$(dirname "$SRC_APK")/shizuku-FIX201-latest-debug-${SHORT_SHA}.apk"
+          cp "$SRC_APK" "$RENAMED_APK"
+          echo "Publishing $RENAMED_APK as release fix-201"
           gh release delete fix-201 --yes --cleanup-tag 2>/dev/null || true
-          gh release create fix-201 "$APK" \
+          gh release create fix-201 "$RENAMED_APK" \
             --target "$GITHUB_SHA" \
-            --title "Shizuku #201 fix build (debug)" \
-            --notes "Debug build with the real fix for issue #201 (UserServiceManager token race). Root-cause fix in the shared UserServiceManager.sendUserServiceLocked: an attach for an expired/evicted token is no longer thrown as an exception - the orphaned binder is told to clean itself up and the caller's attach completes normally, no restart required.
+            --title "Shizuku #201 FIX build (debug) - commit ${SHORT_SHA}" \
+            --notes "THIS IS THE #201 FIX BUILD, not a repro build and not the stress-tester app.
+
+          Asset filename: shizuku-FIX201-latest-debug-${SHORT_SHA}.apk
+          Built from commit: ${SHORT_SHA}
+
+          Root-cause fix in the shared UserServiceManager.sendUserServiceLocked: an attach for an expired/evicted UserService token is no longer thrown as an exception - the orphaned binder is told to clean itself up and the caller's attach completes normally, no restart required.
+
+          This release tag (fix-201) always points at the latest build from the fix-userservice-token-race branch - re-download from the same link any time to get the current version, and check the asset filename above/commit SHA to confirm freshness.
 
           Debug-signed, not for daily use." \
             --prerelease
