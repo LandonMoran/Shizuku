@@ -71,6 +71,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
           script: |
+            bash <<'STRESS_EOF'
             set -uo pipefail
             PKG=moe.shizuku.privileged.api
             RECEIVER="$PKG/moe.shizuku.manager.repro.Repro201Receiver"
@@ -135,6 +136,7 @@ jobs:
               grep -q '\[repro\] attach OK' "$LOG" || { echo "FAIL(fixed): no successful attach observed"; exit 1; }
               echo "PASS(fixed): no #201, attaches completed"; exit 0
             fi
+            STRESS_EOF
 
       - name: Upload logcat
         if: always()
