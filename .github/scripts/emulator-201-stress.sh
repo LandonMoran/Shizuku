@@ -5,13 +5,14 @@ set -uo pipefail
 
 PKG=moe.shizuku.privileged.api
 RECEIVER="$PKG/moe.shizuku.manager.repro.Repro201Receiver"
-MAIN_ACTIVITY="$PKG/moe.shizuku.manager.MainActivity"
 LOG=logcat.txt
 COUNT=30
 INTERVAL=50
 EXPECT="${EXPECT:-clean}"
 VARIANT="${VARIANT:-unknown}"
 PROFILE="${PROFILE:-unknown}"
+
+drove() { adb logcat -d 2>/dev/null | grep -Eq 'Repro201.*(broadcast received|starting stress loop)'; }
 
 adb wait-for-device
 adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
@@ -21,9 +22,9 @@ echo "installing $APK"
 adb install -r -g "$APK"
 
 # A fresh install is in the stopped state; broadcasts (even explicit -n ones)
-# are dropped for stopped-state packages. Launch the manager once to clear
-# FLAG_STOPPED so the REPRO_201 receiver can actually be delivered.
-adb shell am start -n "$MAIN_ACTIVITY" >/dev/null 2>&1 || true
+# are dropped for stopped-state packages. `monkey` forcibly launches the app
+# and clears FLAG_STOPPED.
+adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
 sleep 3
 
 adb logcat -c || true
@@ -44,8 +45,16 @@ echo "shizuku_server is up"
 # let the server push its binder to the manager process before triggering
 sleep 15
 
+# Fire the trigger, retrying (with a monkey relaunch to keep the manager out of
+# the stopped state) until the receiver actually logs that it started.
 echo "firing REPRO_201 (count=$COUNT interval=$INTERVAL)"
-adb shell am broadcast -a ${PKG}.REPRO_201 -n "$RECEIVER" -f 0x00000020 --ei count $COUNT --el interval $INTERVAL
+for attempt in $(seq 1 6); do
+  adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+  adb shell am broadcast -a ${PKG}.REPRO_201 -n "$RECEIVER" -f 0x00000020 --ei count $COUNT --el interval $INTERVAL >/dev/null 2>&1 || true
+  sleep 6
+  if drove; then echo "receiver started on attempt $attempt"; break; fi
+  echo "receiver not triggered yet (attempt $attempt), retrying..."
+done
 
 DEADLINE=$((SECONDS+240))
 while [ $SECONDS -lt $DEADLINE ]; do
