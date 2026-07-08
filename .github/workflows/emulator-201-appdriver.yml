@@ -1,0 +1,94 @@
+name: emulator-201-appdriver
+
+# Isolated test harness. Lives ONLY on claude/code-session-review-vp9clq* branches.
+# Drives the EXTERNAL stress-tester app (landonmoran/test, v2.0) as a real Shizuku
+# client that spams UserService bind/unbind against the forced-race server. The
+# app's pass/fail oracle is a DIRECT binder connection (verifiedBind), so it does
+# not depend on the flaky in-manager broadcast trigger or on logcat reads.
+# Never merge this workflow (or the repro instrumentation it drives) into
+# fix-userservice-token-race or any upstream PR branch.
+on:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+  workflow_dispatch:
+
+concurrency:
+  group: emulator-201-appdriver-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  appdriver:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - { name: fixed,    ref: claude/code-session-review-vp9clq,          expect: clean }
+          - { name: baseline, ref: claude/code-session-review-vp9clq-baseline, expect: reproduce }
+    name: appdriver-${{ matrix.variant.name }}
+    steps:
+      - name: Checkout Shizuku (server under test)
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.variant.ref }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Checkout stress-tester app (the driver)
+        uses: actions/checkout@v6
+        with:
+          repository: landonmoran/test
+          ref: claude/code-session-review-vp9clq
+          path: stress-app
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Accept SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build manager debug APK (server under test)
+        run: ./gradlew :manager:assembleDebug --stacktrace
+
+      - name: Build stress-tester app APK (the driver)
+        working-directory: stress-app
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run #201 app-driver stress on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          VARIANT: ${{ matrix.variant.name }}
+          EXPECT: ${{ matrix.variant.expect }}
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          cores: 1
+          ram-size: 1536M
+          heap-size: 256M
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
+          script: bash .github/scripts/emulator-201-appdriver.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: appdriver-${{ matrix.variant.name }}
+          path: |
+            logcat.txt
+            stress_results.log
+          if-no-files-found: warn
