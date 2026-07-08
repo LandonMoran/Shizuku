@@ -1,0 +1,81 @@
+name: emulator-201-test
+
+# Isolated test harness. Lives ONLY on claude/code-session-review-vp9clq.
+# Never merge this workflow (or the repro instrumentation it drives) into
+# fix-userservice-token-race or any upstream PR branch.
+on:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+  workflow_dispatch:
+
+concurrency:
+  group: emulator-201-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # SLOW profile - starves the CPU to stretch the spawn->attach window
+          - name: slow
+            cores: 1
+            ram: 1536M
+            heap: 256M
+          # NORMAL profile - baseline
+          - name: normal
+            cores: 2
+            ram: 3072M
+            heap: 512M
+    name: stress-${{ matrix.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Accept SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build manager debug APK
+        run: ./gradlew :manager:assembleDebug --stacktrace
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run #201 stress on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          cores: ${{ matrix.cores }}
+          ram-size: ${{ matrix.ram }}
+          heap-size: ${{ matrix.heap }}
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
+          script: bash .github/scripts/emulator-201-stress.sh
+
+      - name: Upload logcat
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: logcat-${{ matrix.name }}
+          path: logcat.txt
+          if-no-files-found: warn
