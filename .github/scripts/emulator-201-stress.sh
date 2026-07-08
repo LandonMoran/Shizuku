@@ -5,6 +5,7 @@ set -uo pipefail
 
 PKG=moe.shizuku.privileged.api
 RECEIVER="$PKG/moe.shizuku.manager.repro.Repro201Receiver"
+MAIN_ACTIVITY="$PKG/moe.shizuku.manager.MainActivity"
 LOG=logcat.txt
 COUNT=30
 INTERVAL=50
@@ -18,6 +19,12 @@ adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
 APK=$(ls manager/build/outputs/apk/debug/*.apk | head -n1)
 echo "installing $APK"
 adb install -r -g "$APK"
+
+# A fresh install is in the stopped state; broadcasts (even explicit -n ones)
+# are dropped for stopped-state packages. Launch the manager once to clear
+# FLAG_STOPPED so the REPRO_201 receiver can actually be delivered.
+adb shell am start -n "$MAIN_ACTIVITY" >/dev/null 2>&1 || true
+sleep 3
 
 adb logcat -c || true
 adb logcat -G 16M || true
@@ -38,7 +45,7 @@ echo "shizuku_server is up"
 sleep 15
 
 echo "firing REPRO_201 (count=$COUNT interval=$INTERVAL)"
-adb shell am broadcast -a ${PKG}.REPRO_201 -n "$RECEIVER" --ei count $COUNT --el interval $INTERVAL
+adb shell am broadcast -a ${PKG}.REPRO_201 -n "$RECEIVER" -f 0x00000020 --ei count $COUNT --el interval $INTERVAL
 
 DEADLINE=$((SECONDS+240))
 while [ $SECONDS -lt $DEADLINE ]; do
