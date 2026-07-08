@@ -6,8 +6,8 @@ set -uo pipefail
 PKG=moe.shizuku.privileged.api
 RECEIVER="$PKG/moe.shizuku.manager.repro.Repro201Receiver"
 LOG=logcat.txt
-COUNT=30
-INTERVAL=50
+COUNT=200
+INTERVAL=25
 EXPECT="${EXPECT:-clean}"
 VARIANT="${VARIANT:-unknown}"
 PROFILE="${PROFILE:-unknown}"
