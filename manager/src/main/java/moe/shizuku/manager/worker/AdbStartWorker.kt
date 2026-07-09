@@ -53,21 +53,24 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
             Settings.Global.putInt(cr, Settings.Global.ADB_ENABLED, 1)
             Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
 
-            val tcpPort = EnvironmentUtils.getAdbTcpPort()
+            // #188: the direct-connect target must be a LIVE port, never the possibly
+            // stale persisted one. getLiveAdbTcpPort() excludes persist.adb.tcp.port
+            // (and keeps the non-TLS-TV configured-port fallback), so on every path the
+            // port we dial is one adbd is actually listening on -- phones route to
+            // discovery, TVs use their configured port, neither trusts a stale value.
             // #237: do NOT tear down TCP on a background start. Teardown belongs only
             // to the explicit user toggle-off (SettingsFragment.promptStopTcp); doing
             // it here clobbered an externally-set `adb tcpip` on every start.
+            val tcpPort = EnvironmentUtils.getLiveAdbTcpPort()
 
-            // [repro] #188 harness observability. Records the port the start path
-            // read from system properties and whether it will be used DIRECTLY
-            // (skipping mDNS discovery). Baseline: a stale/dead persisted port is
-            // trusted (useStaleDirect=true) -> connects to a dead port -> fails.
-            // Fixed: the dead port is rejected (useStaleDirect=false) -> discovery.
-            // Stripped from the fix PR; lives only on the repro-188 branches.
+            // [repro] #188 harness observability (stripped from the fix PR). Logs the
+            // stale configured value AND the live value, plus whether the start path
+            // uses a port DIRECTLY (skipping mDNS discovery).
+            val staleConfigured = EnvironmentUtils.getAdbTcpPort()
             val useStaleDirect = !EnvironmentUtils.isWifiRequired()
             android.util.Log.i(
                 "REPRO188",
-                "[repro] getAdbTcpPort()=$tcpPort tcpMode=${ShizukuSettings.getTcpMode()} useStaleDirect=$useStaleDirect"
+                "[repro] getAdbTcpPort()=$staleConfigured liveAdbTcpPort=$tcpPort tcpMode=${ShizukuSettings.getTcpMode()} useStaleDirect=$useStaleDirect"
             )
 
             val port = tcpPort.takeIf { !EnvironmentUtils.isWifiRequired() } ?: callbackFlow {
@@ -143,7 +146,7 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
             // [repro] #188: the port we are about to connect to. Baseline logs the
             // stale/dead port here (proving it was used directly); the fix never
             // reaches this with the dead port because it routes to discovery.
-            android.util.Log.i("REPRO188", "[repro] resolved start port=$port (staleFromProps=$tcpPort)")
+            android.util.Log.i("REPRO188", "[repro] resolved start port=$port (livePort=$tcpPort staleConfigured=$staleConfigured)")
 
             AdbStarter.startAdb(applicationContext, port)
             Starter.waitForBinder()
