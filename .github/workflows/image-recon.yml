@@ -1,0 +1,28 @@
+name: image-recon
+
+# [repro] Enumerate the Android system images the GitHub runner's sdkmanager can
+# actually install, focused on API 35-37 (is there a bootable x86_64 Android 17
+# image to validate the #188/#237 fixes on SDK 37?). No emulator; ~1 min.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+    paths:
+      - '.github/workflows/image-recon.yml'
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List available system images (API 34-37)
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          echo "===== ALL system-images for API 34-37 ====="
+          "$SDKMANAGER" --list 2>/dev/null | grep -iE 'system-images;android-3[4567];' | sort -u || echo "(none)"
+          echo
+          echo "===== channel: including previews (--include_obsolete / channel=3) ====="
+          "$SDKMANAGER" --list --channel=3 2>/dev/null | grep -iE 'system-images;android-3[4567];' | sort -u || echo "(none)"
+          echo
+          echo "===== highest android-NN image offered at all ====="
+          "$SDKMANAGER" --list 2>/dev/null | grep -oE 'system-images;android-[0-9]+' | sort -uV | tail -8 || true
