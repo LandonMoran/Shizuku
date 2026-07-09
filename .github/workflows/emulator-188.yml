@@ -16,6 +16,7 @@ on:
       - '.github/scripts/emulator-188.sh'
       - 'manager/src/main/java/moe/shizuku/manager/utils/EnvironmentUtils.kt'
       - 'manager/src/main/java/moe/shizuku/manager/worker/AdbStartWorker.kt'
+      - 'manager/src/main/java/moe/shizuku/manager/home/StartWirelessAdbViewHolder.kt'
       - 'manager/src/main/java/moe/shizuku/manager/receiver/Repro188Receiver.kt'
   workflow_dispatch:
 

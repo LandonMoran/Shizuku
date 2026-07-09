@@ -69,7 +69,12 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
                 return
             }
 
-            val tcpPort = EnvironmentUtils.getAdbTcpPort()
+            // #188: the manual Start path direct-connects to this port (the else
+            // branch below), so it must be a LIVE port, never the possibly stale
+            // persist.adb.tcp.port. getLiveAdbTcpPort() excludes that persisted
+            // fallback (keeping the non-TLS-TV configured-port fallback), so on boot
+            // we route to mDNS rediscovery instead of dialing a dead port.
+            val tcpPort = EnvironmentUtils.getLiveAdbTcpPort()
             val tcpMode = ShizukuSettings.getTcpMode()
 
             // If ADB is NOT listening to a TCP port and the device doesn't support TLS, inform the user

@@ -103,6 +103,13 @@ GOT_PORT=$(echo "$DECISION" | grep -oE 'getAdbTcpPort\(\)=[0-9-]+' | cut -d= -f2
 RESOLVED_PORT=$(echo "$RESOLVED" | grep -oE 'port=[0-9-]+' | head -n1 | cut -d= -f2)
 echo "variant=$VARIANT expect=$EXPECT getAdbTcpPort=${GOT_PORT:-none} useStaleDirect=${USE_STALE:-none} resolvedPort=${RESOLVED_PORT:-none}"
 
+# Manual Start-button path (#188 second construction site). Only the fixed variant
+# emits this line (its receiver calls getLiveAdbTcpPort(), a symbol the fix added).
+MANUAL=$(adb logcat -d 2>/dev/null | tr -d '\r' | grep -oE '\[repro\] manualRoute:.*' | tail -n1)
+STALE_ROUTE=$(echo "$MANUAL" | grep -oE 'staleRoute=[A-Z_:0-9]+' | cut -d= -f2)
+LIVE_ROUTE=$(echo "$MANUAL" | grep -oE 'liveRoute=[A-Z_:0-9]+' | cut -d= -f2)
+echo "manualRoute: staleRoute=${STALE_ROUTE:-none} liveRoute=${LIVE_ROUTE:-none}"
+
 # --- assertions ---
 [ -n "$DECISION" ] || { echo "FAIL: no decision log (receiver/worker never ran)"; exit 1; }
 [ "$GOT_PORT" = "$DEAD_PORT" ] || { echo "FAIL: getAdbTcpPort did not return the seeded dead port ($GOT_PORT != $DEAD_PORT)"; exit 1; }
@@ -114,5 +121,11 @@ if [ "$EXPECT" = "reproduce" ]; then
 else
   [ "$USE_STALE" = "false" ] || { echo "FAIL(fixed): stale dead port still trusted (useStaleDirect=$USE_STALE)"; exit 1; }
   [ "$RESOLVED_PORT" = "$DEAD_PORT" ] && { echo "FAIL(fixed): worker resolved to the dead port despite the fix"; exit 1; }
-  echo "PASS(fixed): stale dead port $DEAD_PORT rejected, routed to discovery (decision changed)"; exit 0
+  echo "PASS(fixed/worker): stale dead port $DEAD_PORT rejected, routed to discovery (decision changed)"
+  # Second construction site: the manual Start button must also reject the stale port.
+  [ -n "$MANUAL" ] || { echo "FAIL(fixed/manual): no manualRoute log (receiver missing the manual-path probe)"; exit 1; }
+  [ "$STALE_ROUTE" = "DIRECT_DIAL:$DEAD_PORT" ] || { echo "FAIL(fixed/manual): stale getter should DIRECT_DIAL the dead port, got '$STALE_ROUTE'"; exit 1; }
+  [ "$LIVE_ROUTE" = "MDNS_DISCOVERY" ] || { echo "FAIL(fixed/manual): live getter should route to mDNS, got '$LIVE_ROUTE'"; exit 1; }
+  echo "PASS(fixed/manual): manual Start button routes to mDNS (stale getAdbTcpPort would DIRECT_DIAL $DEAD_PORT); both #188 sites fixed"
+  exit 0
 fi

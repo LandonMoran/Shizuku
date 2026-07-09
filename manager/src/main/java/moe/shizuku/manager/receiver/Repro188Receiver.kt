@@ -32,6 +32,25 @@ class Repro188Receiver : BroadcastReceiver() {
             "[repro] decision: getAdbTcpPort()=$staleAdbPort isWifiRequired=$wifiRequired useStaleDirect=${!wifiRequired}"
         )
 
+        // [repro] #188 manual Start-button path. The home "Start wireless ADB" button
+        // (StartWirelessAdbViewHolder.start) direct-connects to its tcpPort in the
+        // tcpMode branch. Replicate that branch selection here with BOTH port getters
+        // to prove the fix flips it: the stale getAdbTcpPort() would DIRECT_DIAL the
+        // dead persisted port; the fixed getLiveAdbTcpPort() yields <=0 so the button
+        // routes to mDNS rediscovery instead. tls/tcpMode forced true to exercise the
+        // dangerous direct-dial branch. This getLiveAdbTcpPort() call only compiles on
+        // the fixed variant (the symbol the fix added), so it runs on the fixed leg.
+        val liveAdbPort = EnvironmentUtils.getLiveAdbTcpPort()
+        fun manualRoute(tcpPort: Int): String = when {
+            tcpPort <= 0 -> "MDNS_DISCOVERY"
+            else -> "DIRECT_DIAL:$tcpPort" // tcpMode=true assumed (the risky branch)
+        }
+        Log.i(
+            "REPRO188",
+            "[repro] manualRoute: staleTcpPort=$staleAdbPort liveTcpPort=$liveAdbPort " +
+                "staleRoute=${manualRoute(staleAdbPort)} liveRoute=${manualRoute(liveAdbPort)}"
+        )
+
         AdbStartWorker.enqueue(context)
     }
 }
