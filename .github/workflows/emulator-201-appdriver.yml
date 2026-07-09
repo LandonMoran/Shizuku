@@ -42,6 +42,28 @@ jobs:
           ref: claude/code-session-review-vp9clq
           path: stress-app
 
+      - name: Pin API to thedjchi's LATEST master (both legs); patch the fix onto the fixed leg
+        # Both variants build against thedjchi master fa4e6a95 ("an ungodly amount of
+        # changes") so we test the fix against thedjchi's CURRENT code. The fixed leg
+        # then overlays ONLY the two #201 fix files from the PR (f9fe869e). thedjchi's
+        # recent commits didn't touch those files, so this is exactly the fix rebased
+        # onto latest - baseline vs fixed differ by nothing but the fix.
+        env:
+          DJCHI_MASTER: fa4e6a95084eb839ab160a36e9e6561324cd04db
+          FIX_HEAD: f9fe869e437fcb04ad76a56166d632e8fda3d012
+        run: |
+          cd api
+          git fetch https://github.com/thedjchi/Shizuku-API "$DJCHI_MASTER" --depth=1
+          git checkout "$DJCHI_MASTER"
+          if [ "${{ matrix.variant.name }}" = "fixed" ]; then
+            git fetch https://github.com/LandonMoran/Shizuku-API "$FIX_HEAD" --depth=1
+            git checkout "$FIX_HEAD" -- \
+              server-shared/src/main/java/rikka/shizuku/server/UserServiceManager.java \
+              server-shared/src/main/java/rikka/shizuku/server/UserServiceRecord.java
+          fi
+          echo "== API HEAD for ${{ matrix.variant.name }} =="; git log -1 --oneline
+          echo "== working-tree overlay (empty on baseline, 2 files on fixed) =="; git status --short
+
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
