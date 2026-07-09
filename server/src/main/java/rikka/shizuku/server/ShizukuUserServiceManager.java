@@ -49,10 +49,11 @@ public class ShizukuUserServiceManager extends UserServiceManager {
         // hold the manager lock, so an incoming unbind/rebind can act on this
         // record's token before the delayed process attaches - exactly the
         // condition the #201 fix handles gracefully.
-        if (REPRO_SPAWN_DELAY_MS > 0) {
-            LOGGER.w("[repro] delaying user-service spawn %d ms for token=%s (unbind/rebind now to trigger the race)", REPRO_SPAWN_DELAY_MS, token);
+        long spawnDelayMs = reproSpawnDelayMs();
+        if (spawnDelayMs > 0) {
+            LOGGER.w("[repro] delaying user-service spawn %d ms for token=%s (unbind/rebind now to trigger the race)", spawnDelayMs, token);
             try {
-                Thread.sleep(REPRO_SPAWN_DELAY_MS);
+                Thread.sleep(spawnDelayMs);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -76,6 +77,18 @@ public class ShizukuUserServiceManager extends UserServiceManager {
             cmd = cmd.replaceFirst("\\(", "(SHIZUKU_REPRO_FORCE_NULL=" + reproForceNull + " ");
         }
         return cmd;
+    }
+
+    // [REPRO - harness only] Spawn delay is env-overridable so the provider-null
+    // scenario can disable it (SHIZUKU_REPRO_SPAWN_DELAY_MS=0) and isolate itself
+    // from the token-race trigger. Unset -> the default REPRO_SPAWN_DELAY_MS.
+    private static long reproSpawnDelayMs() {
+        try {
+            String v = System.getenv("SHIZUKU_REPRO_SPAWN_DELAY_MS");
+            return v == null ? REPRO_SPAWN_DELAY_MS : Long.parseLong(v.trim());
+        } catch (Exception e) {
+            return REPRO_SPAWN_DELAY_MS;
+        }
     }
 
     @Override
