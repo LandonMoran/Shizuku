@@ -1,0 +1,46 @@
+name: reboot-probe
+
+# [repro] Focused API 30 vs 36 reboot-recovery probe. No app build; ~5 min each.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+    paths:
+      - '.github/workflows/reboot-probe.yml'
+      - '.github/scripts/reboot-probe.sh'
+
+concurrency:
+  group: reboot-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 36]
+    name: reboot-api${{ matrix.api }}
+    env:
+      API: ${{ matrix.api }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: claude/code-session-review-vp9clq
+          fetch-depth: 1
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Reboot probe
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
+          script: bash .github/scripts/reboot-probe.sh
