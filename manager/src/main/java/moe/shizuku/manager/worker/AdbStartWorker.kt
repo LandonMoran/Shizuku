@@ -58,6 +58,18 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 AdbStarter.stopTcp(applicationContext, tcpPort)
             }
 
+            // [repro] #188 harness observability. Records the port the start path
+            // read from system properties and whether it will be used DIRECTLY
+            // (skipping mDNS discovery). Baseline: a stale/dead persisted port is
+            // trusted (useStaleDirect=true) -> connects to a dead port -> fails.
+            // Fixed: the dead port is rejected (useStaleDirect=false) -> discovery.
+            // Stripped from the fix PR; lives only on the repro-188 branches.
+            val useStaleDirect = !EnvironmentUtils.isWifiRequired()
+            android.util.Log.i(
+                "REPRO188",
+                "[repro] getAdbTcpPort()=$tcpPort tcpMode=${ShizukuSettings.getTcpMode()} useStaleDirect=$useStaleDirect"
+            )
+
             val port = tcpPort.takeIf { !EnvironmentUtils.isWifiRequired() } ?: callbackFlow {
                 val adbMdns = AdbMdns(applicationContext, AdbMdns.TLS_CONNECT) { p ->
                     if (p.second > 0) trySend(p.second)
@@ -127,7 +139,12 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
                     unlockReceiver?.let { applicationContext.unregisterReceiver(it) }
                 }
             }.first()
-            
+
+            // [repro] #188: the port we are about to connect to. Baseline logs the
+            // stale/dead port here (proving it was used directly); the fix never
+            // reaches this with the dead port because it routes to discovery.
+            android.util.Log.i("REPRO188", "[repro] resolved start port=$port (staleFromProps=$tcpPort)")
+
             AdbStarter.startAdb(applicationContext, port)
             Starter.waitForBinder()
 

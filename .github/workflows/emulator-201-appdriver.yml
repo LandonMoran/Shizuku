@@ -11,6 +11,12 @@ on:
   push:
     branches:
       - claude/code-session-review-vp9clq
+    paths:
+      - '.github/workflows/emulator-201-appdriver.yml'
+      - '.github/scripts/emulator-201-appdriver.sh'
+      - 'starter/**'
+      - 'server/**'
+      - 'api/**'
   workflow_dispatch:
 
 concurrency:
