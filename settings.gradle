@@ -46,6 +46,8 @@ dependencyResolutionManagement {
 }
 
 include ":server", ":starter", ":shell", ":manager", ":common"
+// [probe] standalone A17 loopback-vs-LAN adb connect diagnostic (harness-only, never merged).
+include ":nettest"
 
 def root = "api"
 

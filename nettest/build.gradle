@@ -1,0 +1,24 @@
+// [probe] Standalone diagnostic app: does A17 adbd accept a wireless-debugging
+// connection on loopback (127.0.0.1 / ::1) or only on the LAN interface? Targets
+// SDK 37 (via the root subprojects block) so Local Network Protection is enforced.
+// Harness-only; never merged into any fix PR.
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+}
+
+android {
+    namespace = "dev.adbprobe"
+
+    defaultConfig {
+        applicationId = "dev.adbprobe"
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    kotlinOptions {
+        jvmTarget = "21"
+    }
+    // compileSdk = 37, minSdk = 24, targetSdk = 37 and Java 21 are inherited from the
+    // root build.gradle subprojects { } block.
+}

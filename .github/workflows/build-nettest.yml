@@ -1,0 +1,53 @@
+name: build-nettest
+
+# [probe] Builds the standalone "ADB Loopback Probe" diagnostic APK (targetSdk 37)
+# and uploads it as an artifact to sideload on a real Android 17 device, to settle
+# whether adbd accepts wireless-debugging connections on loopback vs only the LAN
+# interface. Harness-only; never merged into a fix PR.
+on:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+    paths:
+      - '.github/workflows/build-nettest.yml'
+      - 'nettest/**'
+      - 'settings.gradle'
+  workflow_dispatch:
+
+concurrency:
+  group: build-nettest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: build-nettest-apk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: claude/code-session-review-vp9clq
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Accept SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build ADB Loopback Probe APK
+        run: ./gradlew :nettest:assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: adb-loopback-probe-apk
+          path: nettest/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
