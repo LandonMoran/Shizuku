@@ -62,11 +62,20 @@ public class ShizukuUserServiceManager extends UserServiceManager {
         if (use32Bits && new File("/system/bin/app_process32").exists()) {
             appProcess = "/system/bin/app_process32";
         }
-        return ServiceStarter.commandForUserService(
+        String cmd = ServiceStarter.commandForUserService(
                 appProcess,
                 ShizukuService.getManagerApplicationInfo().sourceDir,
                 ShizukuService.MANAGER_APPLICATION_ID,
                 token, packageName, classname, processNameSuffix, callingUid, debug);
+        // [REPRO] Propagate the provider-null forcing flag into the spawned
+        // ServiceStarter process (env prefix inside the sub-shell) so it can
+        // simulate a frozen manager provider. Unset -> untouched command.
+        String reproForceNull = System.getenv("SHIZUKU_REPRO_FORCE_NULL");
+        if (reproForceNull != null && !reproForceNull.isEmpty()) {
+            LOGGER.w("[repro] injecting SHIZUKU_REPRO_FORCE_NULL=%s into user-service spawn", reproForceNull);
+            cmd = cmd.replaceFirst("\\(", "(SHIZUKU_REPRO_FORCE_NULL=" + reproForceNull + " ");
+        }
+        return cmd;
     }
 
     @Override

@@ -102,6 +102,20 @@ public class ServiceStarter {
         Log.i(TAG, "service exited");
     }
 
+    // [REPRO - harness only] Force the manager-provider lookup to return null for
+    // the first N attempts, simulating a frozen/unpublished manager ShizukuProvider
+    // (the #201 provider-null condition). N comes from SHIZUKU_REPRO_FORCE_NULL,
+    // which the harness sets on the server and the server propagates into this
+    // spawned process. 0/unset = normal behaviour. Never merge to a release/PR.
+    private static int reproForceNullProvider() {
+        try {
+            String v = System.getenv("SHIZUKU_REPRO_FORCE_NULL");
+            return v == null ? 0 : Integer.parseInt(v.trim());
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
     private static boolean sendBinder(IBinder binder, String token) {
         return sendBinder(binder, token, true);
     }
@@ -125,8 +139,14 @@ public class ServiceStarter {
             // manager here: there is no stale provider record to clear, and killing
             // a merely-frozen manager can push it into the stopped state and make
             // the provider unavailable for good.
+            int reproForceNull = reproForceNullProvider();
             for (int attempt = 0; ; attempt++) {
-                provider = ActivityManagerApis.getContentProviderExternal(name, userId, null, name);
+                if (attempt < reproForceNull) {
+                    Log.w(TAG, String.format("[repro] forcing provider null (attempt %d/%d) to exercise the retry", attempt + 1, reproForceNull));
+                    provider = null;
+                } else {
+                    provider = ActivityManagerApis.getContentProviderExternal(name, userId, null, name);
+                }
                 if (provider != null) {
                     break;
                 }
