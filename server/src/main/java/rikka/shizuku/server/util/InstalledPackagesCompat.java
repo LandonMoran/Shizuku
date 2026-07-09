@@ -30,6 +30,26 @@ public final class InstalledPackagesCompat {
 
     @SuppressWarnings("unchecked")
     public static List<PackageInfo> getInstalledPackages(long flags, int userId) throws ReflectiveOperationException {
+        // Prefer the hidden IPackageManager binder call. It talks straight to
+        // system_server with the (privileged) server process identity, so it is
+        // never subject to app-side package-visibility filtering and, crucially,
+        // is never served from a per-process snapshot. The context PackageManager
+        // path below is bound to the long-lived server process and can keep
+        // returning a stale list until the service is restarted, which left newly
+        // installed/authorized apps missing from the app list and count.
+        try {
+            List<PackageInfo> packages = getInstalledPackagesViaBinder(flags, userId);
+            if (!packages.isEmpty()) {
+                return packages;
+            }
+        } catch (NoSuchMethodException ignored) {
+            // Hidden signature unavailable on this platform; fall back below.
+        } catch (Exception e) {
+            Log.d(TAG, "getInstalledPackages via hidden IPackageManager failed, falling back to context PackageManager", e);
+        }
+
+        // Fallback: the context PackageManager. Kept so the Android 17 port still
+        // works on platforms where the hidden signature above is unavailable.
         try {
             Object packageManager = getContextPackageManager();
             Method method = packageManager.getClass().getMethod("getInstalledPackagesAsUser", int.class, int.class);
@@ -37,9 +57,14 @@ public final class InstalledPackagesCompat {
             return result == null ? Collections.emptyList() : (List<PackageInfo>) result;
         } catch (NoSuchMethodException ignored) {
         } catch (Exception e) {
-            Log.d(TAG, "getInstalledPackagesAsUser failed, falling back to hidden API", e);
+            Log.d(TAG, "getInstalledPackagesAsUser fallback failed", e);
         }
 
+        return Collections.emptyList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<PackageInfo> getInstalledPackagesViaBinder(long flags, int userId) throws ReflectiveOperationException {
         Object packageManager = getPackageManager();
         Method method;
         Object result;
