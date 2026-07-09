@@ -24,6 +24,12 @@ public class ServiceStarter {
 
     private static final String EXTRA_BINDER = "moe.shizuku.privileged.api.intent.extra.BINDER";
 
+    // Backoff (ms) between getContentProviderExternal retries when the manager's
+    // provider is momentarily unpublished (process cached/frozen or still
+    // starting). One lookup happens before the first sleep, so this is 4 retries
+    // for 5 total attempts and ~3.25s of added wait at most. See #201.
+    private static final long[] NULL_PROVIDER_RETRY_BACKOFF_MS = {250, 500, 1000, 1500};
+
     public static final String DEBUG_ARGS;
 
     static {
@@ -106,11 +112,34 @@ public class ServiceStarter {
         IContentProvider provider = null;
 
         try {
-            provider = ActivityManagerApis.getContentProviderExternal(name, userId, null, name);
-            if (provider == null) {
-                Log.e(TAG, String.format("provider is null %s %d", name, userId));
-                return false;
+            // The manager app's ShizukuProvider may not be published at the moment
+            // we look it up: its process can be cached/frozen (commonly under
+            // battery optimization) or still starting, in which case
+            // getContentProviderExternal returns null. Previously we gave up and
+            // returned false immediately, which made main() exit(1) and left the
+            // spawned UserService unable to (re)connect until Shizuku was restarted
+            // (issue #201). Retry the lookup a few times with a short backoff so a
+            // momentarily unavailable manager can resolve on its own.
+            //
+            // Unlike the "provider is dead" path below, do NOT force-stop the
+            // manager here: there is no stale provider record to clear, and killing
+            // a merely-frozen manager can push it into the stopped state and make
+            // the provider unavailable for good.
+            for (int attempt = 0; ; attempt++) {
+                provider = ActivityManagerApis.getContentProviderExternal(name, userId, null, name);
+                if (provider != null) {
+                    break;
+                }
+                if (attempt >= NULL_PROVIDER_RETRY_BACKOFF_MS.length) {
+                    Log.e(TAG, String.format("provider is null %s %d (gave up after %d attempts)", name, userId, attempt + 1));
+                    return false;
+                }
+                long backoff = NULL_PROVIDER_RETRY_BACKOFF_MS[attempt];
+                Log.w(TAG, String.format("provider is null %s %d, retrying in %dms (attempt %d/%d)",
+                        name, userId, backoff, attempt + 1, NULL_PROVIDER_RETRY_BACKOFF_MS.length + 1));
+                Thread.sleep(backoff);
             }
+
             if (!provider.asBinder().pingBinder()) {
                 Log.e(TAG, String.format("provider is dead %s %d", name, userId));
 
