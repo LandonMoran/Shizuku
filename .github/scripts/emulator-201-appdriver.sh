@@ -3,10 +3,12 @@
 # (com.landonmoran.repro201tester, v2.0). Invoked by android-emulator-runner as
 # `bash <this>`. Parameterized by env: EXPECT (clean|reproduce), VARIANT.
 #
-# The app is a real Shizuku client: it receives the binder through the normal
-# provider path and its pass/fail oracle is a DIRECT verifiedBind connection
-# (CountDownLatch on onServiceConnected), not a logcat grep. So this leg avoids
-# both the in-manager broadcast fragility and the READ_LOGS false-pass risk.
+# The app is a real Shizuku client with a DIRECT verifiedBind oracle. Binder
+# delivery is server->client: the shell/root Shizuku server pushes the binder via
+# getContentProviderExternal (bypassing AppsFilter), gated on the client declaring
+# API_V23 - NOT on the client declaring <queries>. So the client process must
+# already exist when the server runs its startup sweep; we launch the app BEFORE
+# starting the server. (Confirmed by code review of ShizukuProvider/BinderSender.)
 set -uo pipefail
 
 MGR=moe.shizuku.privileged.api
@@ -20,17 +22,17 @@ VARIANT="${VARIANT:-unknown}"
 pull_results() {
   adb shell run-as "$APP" cat files/stress_results.log 2>/dev/null | tr -d '\r' > "$RESULTS" || true
 }
+dump_binder_logcat() {
+  adb logcat -d 2>/dev/null | grep -Ei "BinderSender|send binder|sendBinderToUserApp|getContentProviderExternal|provider is null|$APP|ShizukuService|\[repro\]" | tail -n 120 || true
+}
 
 adb wait-for-device
 adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
 adb logcat -G 16M || true
 adb logcat -c || true
 
-# Keep the device awake, unlocked, and out of Doze for the whole run. A visible,
-# non-frozen client is essential: if Android freezes/throttles the driver process
-# (cached-app freezer, Doze, App Standby) the stress loop stalls in a way that
-# could either look like the bug or mask it. We want the driver to be the top,
-# resumed app the entire time.
+# Keep the device awake, unlocked, and out of Doze for the whole run so the driver
+# process is never frozen/throttled (cached-app freezer, Doze, App Standby).
 adb shell svc power stayon true || true
 adb shell input keyevent KEYCODE_WAKEUP || true
 adb shell wm dismiss-keyguard 2>/dev/null || true
@@ -44,26 +46,28 @@ echo "app apk:     $APP_APK"
 adb install -r -g "$MGR_APK"
 adb install -r -g "$APP_APK"
 
-# Pre-authorize the stress-tester as a Shizuku client. The server enforces
-# permission per-uid; seeding the grant before the server starts authorizes the
-# uid server-side. READ_LOGS only enables the app's SECONDARY logcat scan - the
-# primary oracle is the direct binder connection.
+# Authorize the client (server enforces per-uid; the startup sweep pushes to any
+# package that DECLARES API_V23 - grant just makes API calls succeed too).
 adb shell pm grant "$APP" moe.shizuku.manager.permission.API_V23 2>/dev/null || true
 adb shell pm grant "$APP" android.permission.READ_LOGS 2>/dev/null || true
 adb shell pm grant "$APP" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
-
-# Exempt the driver from Doze / background restrictions so its process is never
-# frozen mid-run.
 adb shell dumpsys deviceidle whitelist +"$APP" >/dev/null 2>&1 || true
 adb shell cmd appops set "$APP" RUN_ANY_IN_BACKGROUND allow 2>/dev/null || true
 
-# Fresh installs are in the stopped state; provider/binder delivery won't reach a
-# stopped package. Launch the manager to clear FLAG_STOPPED and publish its
-# provider (it relays the binder to authorized clients).
-adb shell monkey -p "$MGR" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
-sleep 3
+# run-as sanity: if this fails we can't read the result file and would misread an
+# empty file as "never started".
+if adb shell run-as "$APP" id >/dev/null 2>&1; then echo "run-as OK"; else echo "WARNING: run-as $APP failed - result reads may be empty"; fi
 
-# Start the Shizuku server (the code under test) from the manager's native lib.
+# Clear FLAG_STOPPED on BOTH and bring their processes up. Crucially the CLIENT
+# must be running before the server starts so the server's startup sweep
+# (getContentProviderExternal on <app>.shizuku) can reach a live provider.
+adb shell monkey -p "$MGR" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+adb shell am start -n "$APP/.MainActivity" >/dev/null 2>&1 || true
+sleep 6
+FG=$(adb shell dumpsys activity activities 2>/dev/null | grep -Eo "$APP/[^ }]*MainActivity" | head -n1)
+echo "client foreground before server: ${FG:-<none>}"
+
+# Now start the Shizuku server (the code under test) from the manager's native lib.
 APK_DIR=$(dirname "$(adb shell pm path $MGR | sed 's/package://' | tr -d '\r' | head -n1)")
 ABI=$(adb shell ls "$APK_DIR/lib/" | tr -d '\r' | head -n1)
 echo "starter: $APK_DIR/lib/$ABI/libshizuku.so"
@@ -76,23 +80,20 @@ for i in $(seq 1 60); do
 done
 [ "$UP" = "1" ] || { echo "ERROR: shizuku_server never started"; adb logcat -d > "$LOG"; tail -n 120 "$LOG"; exit 1; }
 echo "shizuku_server is up"
-sleep 12   # let the server hand the binder to the manager
 
-# Bring up the client process so its ShizukuProvider requests + receives the
-# binder (relayed by the running manager), then start the stress loop headlessly.
-# Retry the whole bring-up if the loop halts at startup for a not-yet-ready binder.
+echo "----- server push logcat (post-start) -----"
+sleep 12          # let the startup sweep push binders to the running clients
+dump_binder_logcat
+echo "-------------------------------------------"
+
+# Start the stress loop. If the binder hasn't arrived yet the loop halts at
+# startup; re-launch the client (process-observer re-push) and retry.
 STARTED=0
-for attempt in $(seq 1 4); do
+for attempt in $(seq 1 5); do
   echo "=== bring-up attempt $attempt ==="
-  # Open the Activity to the FOREGROUND (not just a background service). READ_LOGS
-  # is already granted, so MainActivity won't try to self-close via its grant
-  # flow - it settles on "Ready" and stays visible. A resumed, visible Activity
-  # keeps the whole process out of the cached/frozen state.
   adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
   adb shell am start -n "$APP/.MainActivity" >/dev/null 2>&1 || true
-  sleep 15   # binder delivery to the client
-  FG=$(adb shell dumpsys activity activities 2>/dev/null | grep -Eo "$APP/[^ }]*MainActivity" | head -n1)
-  echo "foreground activity: ${FG:-<none detected>}"
+  sleep 6
   adb shell am start-foreground-service -n "$SVC" >/dev/null 2>&1 || true
   for j in $(seq 1 8); do
     sleep 3
@@ -107,6 +108,9 @@ for attempt in $(seq 1 4); do
     fi
   done
   [ "$STARTED" = "1" ] && { echo "stress loop is running"; break; }
+  echo "-- diagnostics after attempt $attempt --"
+  echo "results file:"; adb shell run-as "$APP" ls -la files/ 2>/dev/null | tr -d '\r' || echo "(run-as ls failed)"
+  dump_binder_logcat
 done
 
 if [ "$STARTED" != "1" ]; then
@@ -114,8 +118,7 @@ if [ "$STARTED" != "1" ]; then
   pull_results
   echo "----- stress_results.log -----"; cat "$RESULTS" 2>/dev/null || echo "(empty)"
   adb logcat -d > "$LOG"
-  echo "----- shizuku / binder logcat -----"
-  grep -E "Shizuku|shizuku|$APP|send binder|REQUEST_BINDER|\[repro\]" "$LOG" | tail -n 150 || true
+  echo "----- binder / server logcat -----"; dump_binder_logcat
   exit 1
 fi
 
@@ -125,7 +128,6 @@ DEADLINE=$((SECONDS+240))
 TICK=0
 while [ $SECONDS -lt $DEADLINE ]; do
   sleep 8
-  # Keep the driver visible/awake so it's never frozen mid-run (cheap insurance).
   TICK=$((TICK+1))
   if [ $((TICK % 5)) -eq 0 ]; then
     adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
@@ -138,7 +140,6 @@ while [ $SECONDS -lt $DEADLINE ]; do
   [ -n "${LAST_CHURN:-}" ] && [ "$LAST_CHURN" -ge 400 ] && { echo "reached churn=$LAST_CHURN"; break; }
 done
 
-# Stop cleanly and collect.
 adb shell am startservice -n "$SVC" -a "$APP.STOP" >/dev/null 2>&1 || true
 sleep 3
 pull_results
