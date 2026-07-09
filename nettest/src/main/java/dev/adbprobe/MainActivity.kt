@@ -1,6 +1,8 @@
 package dev.adbprobe
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Build
@@ -60,6 +62,15 @@ class MainActivity : Activity() {
             text = "Request local-network permission"
             setOnClickListener { requestLnp() }
         }
+        val copyBtn = Button(this).apply {
+            text = "Copy report"
+            setOnClickListener {
+                val report = header.text.toString() + "\n\n" + results.text.toString()
+                getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText("adb-probe report", report))
+                Toast.makeText(this@MainActivity, "Report copied", Toast.LENGTH_SHORT).show()
+            }
+        }
         val clearBtn = Button(this).apply {
             text = "Clear"
             setOnClickListener { results.text = ""; refreshHeader() }
@@ -74,6 +85,7 @@ class MainActivity : Activity() {
         root.addView(portInput, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(runBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(permBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(copyBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(clearBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(ScrollView(this).apply { addView(results) }, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
 
