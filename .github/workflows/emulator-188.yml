@@ -1,0 +1,75 @@
+name: emulator-188
+
+# [repro] #188 behavioral harness. This first iteration validates the BASELINE
+# reproduce path on the current (stock-for-#188) branch: seed a stale/dead
+# persisted ADB TCP port, reboot, drive the real AdbStartWorker, and prove it
+# connects to the dead port directly (skipping discovery). Expands to a fixed vs
+# baseline matrix once the #188 fix + baseline sibling branch exist. Harness-only.
+on:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+    paths:
+      - '.github/workflows/emulator-188.yml'
+      - '.github/scripts/emulator-188.sh'
+      - 'manager/src/main/java/moe/shizuku/manager/worker/AdbStartWorker.kt'
+      - 'manager/src/main/java/moe/shizuku/manager/receiver/Repro188Receiver.kt'
+  workflow_dispatch:
+
+concurrency:
+  group: emulator-188-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    name: baseline-reproduce
+    env:
+      VARIANT: baseline
+      EXPECT: reproduce
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: claude/code-session-review-vp9clq
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Accept SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build manager debug APK
+        run: ./gradlew :manager:assembleDebug --stacktrace
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run #188 behavioral repro on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
+          script: bash .github/scripts/emulator-188.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: emulator-188-baseline
+          path: logcat.txt
+          if-no-files-found: warn
