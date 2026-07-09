@@ -54,9 +54,9 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
             Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
 
             val tcpPort = EnvironmentUtils.getAdbTcpPort()
-            if (tcpPort > 0 && !ShizukuSettings.getTcpMode()) {
-                AdbStarter.stopTcp(applicationContext, tcpPort)
-            }
+            // #237: do NOT tear down TCP on a background start. Teardown belongs only
+            // to the explicit user toggle-off (SettingsFragment.promptStopTcp); doing
+            // it here clobbered an externally-set `adb tcpip` on every start.
 
             // [repro] #188 harness observability. Records the port the start path
             // read from system properties and whether it will be used DIRECTLY
