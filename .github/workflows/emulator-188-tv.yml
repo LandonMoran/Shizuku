@@ -25,9 +25,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Fixed variant only. The stale-persist A/B contrast isn't reproducible on
+        # the TV image -- its SELinux policy blocks `setprop persist.adb.tcp.port`
+        # ("Failed to set property ... See dmesg"), so no stale value can be planted.
+        # Without one, stock and fixed both fall through to the configured-port
+        # fallback (5555), so there is nothing to contrast. This job instead
+        # CONFIRMS the fix's TV path executes correctly on a real Android TV
+        # (leanback -> isTelevision, SDK<33 -> !isTlsSupported -> configured-port
+        # fallback, worker runs). The persist-skip itself is code-guaranteed
+        # (getLiveAdbTcpPort never reads persist on TV) and proven on the phone A/B.
         variant:
-          - { name: fixed,    ref: claude/code-session-review-vp9clq,              expect: clean }
-          - { name: baseline, ref: claude/code-session-review-vp9clq-188-baseline, expect: reproduce }
+          - { name: fixed, ref: claude/code-session-review-vp9clq, expect: clean }
     name: 188-tv-${{ matrix.variant.name }}
     env:
       VARIANT: ${{ matrix.variant.name }}
