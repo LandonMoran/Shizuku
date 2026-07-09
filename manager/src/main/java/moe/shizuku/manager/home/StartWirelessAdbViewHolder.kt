@@ -63,14 +63,21 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
                 Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
             }
         
+            val tcpPort = EnvironmentUtils.getAdbTcpPort()
+            val tcpMode = ShizukuSettings.getTcpMode()
+
+            // #204: the wireless Start path needs WIRELESS debugging, not USB debugging.
+            // Only warn about USB debugging when there is genuinely no ADB access at all
+            // -- no USB debugging, no wireless debugging, and no live TCP port. A
+            // non-privileged read of adb_enabled returns 0 on some ROMs even when USB
+            // debugging is on, which previously blocked a valid wireless start right
+            // after a successful pairing.
             val adbEnabled = Settings.Global.getInt(cr, Settings.Global.ADB_ENABLED, 0)
-            if (adbEnabled == 0) {
+            val adbWifiEnabled = Settings.Global.getInt(cr, "adb_wifi_enabled", 0)
+            if (adbEnabled == 0 && adbWifiEnabled == 0 && tcpPort <= 0) {
                 WadbEnableUsbDebuggingDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
                 return
             }
-
-            val tcpPort = EnvironmentUtils.getAdbTcpPort()
-            val tcpMode = ShizukuSettings.getTcpMode()
 
             // If ADB is NOT listening to a TCP port and the device doesn't support TLS, inform the user
             if (tcpPort <= 0 && !EnvironmentUtils.isTlsSupported()) {
