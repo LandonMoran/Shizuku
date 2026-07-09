@@ -1,0 +1,55 @@
+name: probe-197-pairing
+
+# [probe] #197 Path A viability: can the emulator do real Wireless-debugging
+# pairing headlessly (start a pairing server + let us read the code + IP:port)?
+# Evidence-gathering only -- prints a VERDICT (PATH_A_VIABLE=yes/no) and always
+# passes. Decides whether the end-to-end #197 test uses real adbd (Path A) or a
+# custom known-code SPAKE2 server (Path B). Harness-only; never merged.
+on:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+    paths:
+      - '.github/workflows/probe-197-pairing.yml'
+      - '.github/scripts/probe-197-pairing.sh'
+  workflow_dispatch:
+
+concurrency:
+  group: probe-197-pairing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    name: 197-pairing-probe-api30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: claude/code-session-review-vp9clq
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run #197 pairing viability probe
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
+          script: bash .github/scripts/probe-197-pairing.sh
+
+      - name: Upload probe log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: probe-197-pairing
+          path: probe.txt
+          if-no-files-found: warn
