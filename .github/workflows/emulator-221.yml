@@ -1,0 +1,72 @@
+name: emulator-221
+
+# [repro] #221 confirmation. On API 30 (real reboot works), with auto-disable USB
+# debugging on and start-on-boot off, prove AutoDisableUsbDebuggingReceiver fires on
+# the real boot and decides to disable (log-only in repro mode so adb survives).
+# Single fixed variant: baseline has no such receiver, so "it fires and decides to
+# disable" is itself the proof the fix works. Harness-only.
+on:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+    paths:
+      - '.github/workflows/emulator-221.yml'
+      - '.github/scripts/emulator-221.sh'
+      - 'manager/src/main/java/moe/shizuku/manager/receiver/AutoDisableUsbDebuggingReceiver.kt'
+      - 'manager/src/main/java/moe/shizuku/manager/receiver/Repro221Receiver.kt'
+  workflow_dispatch:
+
+concurrency:
+  group: emulator-221-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    name: 221-fixed
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: claude/code-session-review-vp9clq
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Accept SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build manager debug APK
+        run: ./gradlew :manager:assembleDebug --stacktrace
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run #221 reconcile test on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
+          script: bash .github/scripts/emulator-221.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: emulator-221-fixed
+          path: logcat.txt
+          if-no-files-found: warn
