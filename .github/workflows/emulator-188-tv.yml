@@ -1,30 +1,26 @@
-name: emulator-188
+name: emulator-188-tv
 
-# [repro] #188 A/B harness. Seeds a stale/dead persisted ADB TCP port, reboots
-# (survives), drives the real AdbStartWorker via the harness receiver, and checks
-# the port decision:
-#   baseline (stock): useStaleDirect=true, resolves+connects to the dead port -> #188
-#   fixed:            useStaleDirect=false, routed to discovery (dead port rejected)
-# Deterministic bug -> a single emulator profile is sufficient (no timing fan-out).
-# Harness-only; lives on claude/code-session-review-vp9clq* branches, never merged.
+# [repro] #188 on Android TV. Legacy TV (API 30, SDK 30 < 33) so isTlsSupported()
+# is false and the non-TLS-TV configured-port fallback is exercised. Proves the fix
+# makes a TV use its CONFIGURED port (5555), not the stale persisted one (43217),
+# where the phone path can't (TVs skip mDNS discovery). Harness-only.
 on:
   push:
     branches:
       - claude/code-session-review-vp9clq
     paths:
-      - '.github/workflows/emulator-188.yml'
-      - '.github/scripts/emulator-188.sh'
+      - '.github/workflows/emulator-188-tv.yml'
+      - '.github/scripts/emulator-188-tv.sh'
       - 'manager/src/main/java/moe/shizuku/manager/utils/EnvironmentUtils.kt'
       - 'manager/src/main/java/moe/shizuku/manager/worker/AdbStartWorker.kt'
-      - 'manager/src/main/java/moe/shizuku/manager/receiver/Repro188Receiver.kt'
   workflow_dispatch:
 
 concurrency:
-  group: emulator-188-${{ github.ref }}
+  group: emulator-188-tv-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  ab:
+  tv:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -32,12 +28,7 @@ jobs:
         variant:
           - { name: fixed,    ref: claude/code-session-review-vp9clq,              expect: clean }
           - { name: baseline, ref: claude/code-session-review-vp9clq-188-baseline, expect: reproduce }
-        # API 36 removed: the emulator cannot survive an in-script `adb reboot` on
-        # that image (probe: never recovers), so a faithful boot test is impossible
-        # there. Android 16 equivalence is established via the behavior-changes docs
-        # (no adb/port/boot changes) + the real-device test.
-        api: [30]
-    name: 188-${{ matrix.variant.name }}-api${{ matrix.api }}
+    name: 188-tv-${{ matrix.variant.name }}
     env:
       VARIANT: ${{ matrix.variant.name }}
       EXPECT: ${{ matrix.variant.expect }}
@@ -49,11 +40,11 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Sync canonical harness script (both variants run the same one)
+      - name: Sync canonical TV harness script
         run: |
           git fetch origin claude/code-session-review-vp9clq --depth=1
-          git checkout FETCH_HEAD -- .github/scripts/emulator-188.sh
-          echo "harness script synced from claude/code-session-review-vp9clq"
+          git checkout FETCH_HEAD -- .github/scripts/emulator-188-tv.sh
+          echo "TV harness script synced from claude/code-session-review-vp9clq"
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -76,20 +67,20 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Run #188 A/B on emulator
+      - name: Run #188 TV A/B on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: ${{ matrix.api }}
-          target: google_apis
-          arch: x86_64
+          api-level: 30
+          target: android-tv
+          arch: x86
           disable-animations: true
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
-          script: bash .github/scripts/emulator-188.sh
+          script: bash .github/scripts/emulator-188-tv.sh
 
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: emulator-188-${{ matrix.variant.name }}-api${{ matrix.api }}
+          name: emulator-188-tv-${{ matrix.variant.name }}
           path: logcat.txt
           if-no-files-found: warn
