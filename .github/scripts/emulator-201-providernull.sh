@@ -28,7 +28,8 @@ dump_pn_logcat() {
 
 adb wait-for-device
 adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
-adb logcat -G 16M || true
+adb logcat -G 64M || true
+: > "$LOG"   # empty accumulator; append periodic dumps and clear the device buffer
 adb logcat -c || true
 adb shell svc power stayon true || true
 adb shell input keyevent KEYCODE_WAKEUP || true
@@ -95,18 +96,28 @@ if [ "$STARTED" != "1" ]; then
 fi
 
 # Baseline HARD-FAILs quickly (every spawn exits on the forced null); fixed climbs.
-DEADLINE=$((SECONDS+200))
+CHURN_TARGET=2000
+DEADLINE=$((SECONDS+720))
+TICK=0; STOP_REASON=deadline
 while [ $SECONDS -lt $DEADLINE ]; do
-  sleep 8; pull_results
-  grep -q 'HARD FAILURE' "$RESULTS" 2>/dev/null && { echo "HARD FAILURE observed"; break; }
-  grep -Eq '=== (Stopped|Halted)' "$RESULTS" 2>/dev/null && { echo "loop ended"; break; }
+  sleep 8; TICK=$((TICK+1))
+  if [ $((TICK % 5)) -eq 0 ]; then
+    adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+    adb shell am start -n "$APP/.MainActivity" >/dev/null 2>&1 || true
+    adb logcat -d >> "$LOG" 2>/dev/null || true   # keep the buffer small so spam stays fast
+    adb logcat -c >/dev/null 2>&1 || true
+  fi
+  pull_results
+  grep -q 'HARD FAILURE' "$RESULTS" 2>/dev/null && { STOP_REASON=hardfail; echo "HARD FAILURE observed"; break; }
+  grep -Eq '=== (Stopped|Halted)' "$RESULTS" 2>/dev/null && { STOP_REASON=loopended; echo "loop ended"; break; }
   LAST_CHURN=$(grep -oE 'churn=[0-9]+' "$RESULTS" 2>/dev/null | tail -n1 | cut -d= -f2)
-  [ -n "${LAST_CHURN:-}" ] && [ "$LAST_CHURN" -ge 60 ] && { echo "reached churn=$LAST_CHURN"; break; }
+  [ -n "${LAST_CHURN:-}" ] && [ "$LAST_CHURN" -ge $CHURN_TARGET ] && { STOP_REASON=target; echo "reached churn target: $LAST_CHURN"; break; }
 done
+echo "poll stopped: reason=$STOP_REASON churn=${LAST_CHURN:-0}"
 
 adb shell am startservice -n "$SVC" -a "$APP.STOP" >/dev/null 2>&1 || true
 sleep 3; pull_results
-adb logcat -d > "$LOG" 2>/dev/null || true
+adb logcat -d >> "$LOG" 2>/dev/null || true
 
 echo "===== stress_results.log ====="; cat "$RESULTS" 2>/dev/null || echo "(empty)"
 echo "===== provider-null logcat ====="
@@ -131,6 +142,6 @@ if [ "$EXPECT" = "reproduce" ]; then
 else
   [ "$HARD" = "1" ] && { echo "FAIL(fixed): hard failure - the retry did not absorb the forced provider-null"; exit 1; }
   [ "$RETRIED" = "1" ] || { echo "FAIL(fixed): never observed the 2nd forced-null retry - trigger too weak to prove the fix"; exit 1; }
-  [ "$LAST_CHURN" -ge 40 ] || { echo "FAIL(fixed): too little churn ($LAST_CHURN) to trust a clean result"; exit 1; }
+  [ "$LAST_CHURN" -ge 200 ] || { echo "FAIL(fixed): too little churn ($LAST_CHURN) to trust a clean result"; exit 1; }
   echo "PASS(fixed): survived forced provider-null via bounded retry, $LAST_CHURN churn, no wedge"; exit 0
 fi

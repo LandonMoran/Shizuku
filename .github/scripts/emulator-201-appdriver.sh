@@ -28,7 +28,8 @@ dump_binder_logcat() {
 
 adb wait-for-device
 adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
-adb logcat -G 16M || true
+adb logcat -G 64M || true
+: > "$LOG"   # start an empty accumulator; we append periodic dumps and clear the device buffer
 adb logcat -c || true
 
 # Keep the device awake, unlocked, and out of Doze for the whole run so the driver
@@ -124,26 +125,33 @@ fi
 
 # Let the app spam bind/unbind. Baseline should self-terminate with a HARD
 # FAILURE once the forced race wedges the server; fixed should keep climbing.
-DEADLINE=$((SECONDS+240))
-TICK=0
+CHURN_TARGET=2000
+DEADLINE=$((SECONDS+720))
+TICK=0; STOP_REASON=deadline
 while [ $SECONDS -lt $DEADLINE ]; do
   sleep 8
   TICK=$((TICK+1))
   if [ $((TICK % 5)) -eq 0 ]; then
     adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
     adb shell am start -n "$APP/.MainActivity" >/dev/null 2>&1 || true
+    # Keep the device logcat buffer SMALL so the app's per-churn logcat scan stays
+    # fast - a huge buffer is what slows the spam, not the bind/unbind path itself.
+    # Accumulate evidence to $LOG first, then clear the device buffer.
+    adb logcat -d >> "$LOG" 2>/dev/null || true
+    adb logcat -c >/dev/null 2>&1 || true
   fi
   pull_results
-  grep -q 'HARD FAILURE' "$RESULTS" 2>/dev/null && { echo "HARD FAILURE observed"; break; }
-  grep -Eq '=== (Stopped|Halted)' "$RESULTS" 2>/dev/null && { echo "loop ended on its own"; break; }
+  grep -q 'HARD FAILURE' "$RESULTS" 2>/dev/null && { STOP_REASON=hardfail; echo "HARD FAILURE observed"; break; }
+  grep -Eq '=== (Stopped|Halted)' "$RESULTS" 2>/dev/null && { STOP_REASON=loopended; echo "loop ended on its own"; break; }
   LAST_CHURN=$(grep -oE 'churn=[0-9]+' "$RESULTS" 2>/dev/null | tail -n1 | cut -d= -f2)
-  [ -n "${LAST_CHURN:-}" ] && [ "$LAST_CHURN" -ge 400 ] && { echo "reached churn=$LAST_CHURN"; break; }
+  [ -n "${LAST_CHURN:-}" ] && [ "$LAST_CHURN" -ge $CHURN_TARGET ] && { STOP_REASON=target; echo "reached churn target: $LAST_CHURN"; break; }
 done
+echo "poll stopped: reason=$STOP_REASON churn=${LAST_CHURN:-0} (a deadline stop after a big clean churn is fine - the log buffer, not the fix, is what slows it)"
 
 adb shell am startservice -n "$SVC" -a "$APP.STOP" >/dev/null 2>&1 || true
 sleep 3
 pull_results
-adb logcat -d > "$LOG" 2>/dev/null || true
+adb logcat -d >> "$LOG" 2>/dev/null || true
 
 echo "===== stress_results.log ====="
 cat "$RESULTS" 2>/dev/null || echo "(empty)"
@@ -167,6 +175,6 @@ if [ "$EXPECT" = "reproduce" ]; then
   echo "FAIL(baseline): expected a hard failure but none occurred (churn=$LAST_CHURN)"; exit 1
 else
   [ "$HARD" = "1" ] && { echo "FAIL(fixed): #201 hard failure - fix did not hold"; exit 1; }
-  [ "$LAST_CHURN" -ge 100 ] || { echo "FAIL(fixed): too little churn ($LAST_CHURN) to trust a clean result"; exit 1; }
+  [ "$LAST_CHURN" -ge 200 ] || { echo "FAIL(fixed): too little churn ($LAST_CHURN) to trust a clean result"; exit 1; }
   echo "PASS(fixed): $LAST_CHURN churn cycles under the forced race, no hard failure (recovered=$RECOVERED)"; exit 0
 fi
