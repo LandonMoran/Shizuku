@@ -6,6 +6,10 @@
     <!-- Android 17 (SDK 37): LAN access is gated behind this runtime permission.
          Loopback (127.0.0.1) should NOT require it; that is exactly what we test. -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <!-- Shizuku declares this; on Android 17 it governs connecting to a loopback
+         port owned by another UID (adbd runs as root/shell). Without it the probe
+         mis-reports loopback as dead, so declare it to mirror the real app. -->
+    <uses-permission android:name="android.permission.USE_LOOPBACK_INTERFACE" />
     <!-- Android 16 (SDK 36) used this for local-network discovery. -->
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
