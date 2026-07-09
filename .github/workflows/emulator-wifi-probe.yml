@@ -1,0 +1,43 @@
+name: emulator-wifi-probe
+
+# [repro] Wi-Fi recon: can we get the emulator onto an unmetered network with
+# INTERNET (what the fixed #188 worker's NetworkType.UNMETERED constraint needs)?
+# Pure recon; drives no app code. Harness-only, never merged.
+on:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+    paths:
+      - '.github/workflows/emulator-wifi-probe.yml'
+      - '.github/scripts/emulator-wifi-probe.sh'
+  workflow_dispatch:
+
+concurrency:
+  group: emulator-wifi-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wifi-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: claude/code-session-review-vp9clq
+          fetch-depth: 1
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Probe emulator Wi-Fi / metering
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
+          script: bash .github/scripts/emulator-wifi-probe.sh
