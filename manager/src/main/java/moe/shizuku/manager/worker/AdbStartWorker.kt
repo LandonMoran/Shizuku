@@ -54,9 +54,6 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
             Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
 
             val tcpPort = EnvironmentUtils.getAdbTcpPort()
-            if (tcpPort > 0 && !ShizukuSettings.getTcpMode()) {
-                AdbStarter.stopTcp(applicationContext, tcpPort)
-            }
 
             val port = tcpPort.takeIf { !EnvironmentUtils.isWifiRequired() } ?: callbackFlow {
                 val adbMdns = AdbMdns(applicationContext, AdbMdns.TLS_CONNECT) { p ->
