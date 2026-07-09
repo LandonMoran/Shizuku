@@ -43,15 +43,27 @@ adb shell pm grant $MGR android.permission.WRITE_SECURE_SETTINGS 2>/dev/null || 
 adb shell pm grant $MGR android.permission.READ_LOGS 2>/dev/null || true
 adb shell pm grant $MGR android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 
+# Launch the manager once: a freshly-installed app is in the "stopped" state and
+# receives no broadcasts until first launched. This also runs ShizukuApplication
+# init (ShizukuSettings.initialize).
+echo "launch manager once to leave stopped-state + init prefs"
+adb shell monkey -p $MGR -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+sleep 6
+
 adb logcat -c || true
 
 echo "############ trigger real start path via harness receiver ############"
-adb shell am broadcast -a $MGR.REPRO188 -n $MGR/.receiver.Repro188Receiver | tr -d '\r'
+# Full class name: the manifest's ".receiver.X" resolves the CLASS against the
+# manifest namespace (moe.shizuku.manager), not the applicationId. -f 0x20 =
+# FLAG_INCLUDE_STOPPED_PACKAGES as belt-and-suspenders.
+adb shell am broadcast -a $MGR.REPRO188 \
+  -n $MGR/moe.shizuku.manager.receiver.Repro188Receiver \
+  -f 0x00000020 | tr -d '\r'
 
 DECISION=""; RESOLVED=""
 for i in $(seq 1 30); do
   sleep 3
-  BUF=$(adb logcat -d -s REPRO188 2>/dev/null | tr -d '\r')
+  BUF=$(adb logcat -d 2>/dev/null | tr -d '\r' | grep 'REPRO188')
   DECISION=$(echo "$BUF" | grep -oE '\[repro\] decision:.*' | tail -n1)
   RESOLVED=$(echo "$BUF" | grep -oE '\[repro\] resolved start port=[0-9-]+.*' | tail -n1)
   if [ -n "$DECISION" ]; then
@@ -59,11 +71,11 @@ for i in $(seq 1 30); do
   fi
 done
 
-# Full artifact log: repro markers + worker/adb-client errors around them.
-adb logcat -d 2>/dev/null | tr -d '\r' | grep -Ei 'REPRO188|AdbStart|AdbStarter|AdbClient|UnknownHost|Connection refused|shizuku' | tail -n 200 > "$LOG" || true
+# Full artifact log: repro markers + worker/adb-client errors + any crash.
+adb logcat -d 2>/dev/null | tr -d '\r' | grep -Ei 'REPRO188|AdbStart|AdbStarter|AdbClient|AndroidRuntime|UnknownHost|Connection refused|shizuku' | tail -n 250 > "$LOG" || true
 
 echo "===== [repro] markers ====="
-adb logcat -d -s REPRO188 2>/dev/null | tr -d '\r' | grep -E '\[repro\]' || echo "(no [repro] logs!)"
+adb logcat -d 2>/dev/null | tr -d '\r' | grep -E 'REPRO188.*\[repro\]' || echo "(no [repro] logs!)"
 echo "==========================="
 
 USE_STALE=$(echo "$DECISION" | grep -oE 'useStaleDirect=(true|false)' | cut -d= -f2)
