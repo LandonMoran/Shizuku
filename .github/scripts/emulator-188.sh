@@ -20,25 +20,45 @@ LOG=logcat.txt
 EXPECT="${EXPECT:-reproduce}"
 VARIANT="${VARIANT:-unknown}"
 
+# Bounded boot wait: never spins forever (the API-36 hang was an unbounded loop
+# after an in-script reboot). Returns non-zero on timeout so callers can proceed.
 wait_boot() {
-  adb wait-for-device
-  adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done' 2>/dev/null || true
+  timeout 60 adb wait-for-device 2>/dev/null || true
+  local t=0
+  while [ "$(timeout 15 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; do
+    sleep 3; t=$((t+3))
+    if [ "$t" -ge 240 ]; then echo "  wait_boot: TIMEOUT after ${t}s"; return 1; fi
+  done
+  echo "  boot_completed (${t}s)"; return 0
 }
+gp() { timeout 15 adb shell getprop "$1" 2>/dev/null | tr -d '\r'; }
 
-wait_boot
+wait_boot || echo "WARN: initial wait_boot timed out"
 
 echo "############ seed stale persisted port + reboot ############"
-adb root >/dev/null 2>&1 || true; sleep 2; wait_boot
-adb shell setprop persist.adb.tcp.port $DEAD_PORT
-echo "seeded persist.adb.tcp.port=[$(adb shell getprop persist.adb.tcp.port | tr -d '\r')]"
-adb reboot; sleep 5; wait_boot
-adb root >/dev/null 2>&1 || true; sleep 2; wait_boot
-echo "after reboot: persist=[$(adb shell getprop persist.adb.tcp.port | tr -d '\r')] service=[$(adb shell getprop service.adb.tcp.port | tr -d '\r')]"
+timeout 30 adb root >/dev/null 2>&1 || true; sleep 2; wait_boot || true
+timeout 15 adb shell setprop persist.adb.tcp.port $DEAD_PORT || true
+echo "seeded persist.adb.tcp.port=[$(gp persist.adb.tcp.port)]"
+echo "rebooting (best-effort; harness continues even if recovery is slow)..."
+timeout 30 adb reboot >/dev/null 2>&1 || echo "  adb reboot returned nonzero"
+sleep 5
+if wait_boot; then
+  timeout 30 adb root >/dev/null 2>&1 || true; sleep 2; wait_boot || true
+  echo "after reboot: persist=[$(gp persist.adb.tcp.port)] service=[$(gp service.adb.tcp.port)]"
+else
+  echo "WARN: no recovery from reboot within timeout; reconnecting + re-seeding on current device"
+  timeout 30 adb reconnect >/dev/null 2>&1 || true
+  timeout 30 adb reconnect offline >/dev/null 2>&1 || true
+  wait_boot || true
+  timeout 30 adb root >/dev/null 2>&1 || true; sleep 2
+  timeout 15 adb shell setprop persist.adb.tcp.port $DEAD_PORT 2>/dev/null || true
+  echo "post-timeout: persist=[$(gp persist.adb.tcp.port)] service=[$(gp service.adb.tcp.port)]"
+fi
 
 echo "############ install manager + grant perms ############"
 MGR_APK=$(ls manager/build/outputs/apk/debug/*.apk | head -n1)
 echo "manager apk: $MGR_APK"
-adb install -r -g "$MGR_APK"
+timeout 180 adb install -r -g "$MGR_APK" || echo "WARN: install returned nonzero"
 adb shell pm grant $MGR android.permission.WRITE_SECURE_SETTINGS 2>/dev/null || true
 adb shell pm grant $MGR android.permission.READ_LOGS 2>/dev/null || true
 adb shell pm grant $MGR android.permission.POST_NOTIFICATIONS 2>/dev/null || true
@@ -47,16 +67,16 @@ adb shell pm grant $MGR android.permission.POST_NOTIFICATIONS 2>/dev/null || tru
 # receives no broadcasts until first launched. This also runs ShizukuApplication
 # init (ShizukuSettings.initialize).
 echo "launch manager once to leave stopped-state + init prefs"
-adb shell monkey -p $MGR -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+timeout 45 adb shell monkey -p $MGR -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
 sleep 6
 
-adb logcat -c || true
+timeout 15 adb logcat -c || true
 
 echo "############ trigger real start path via harness receiver ############"
 # Full class name: the manifest's ".receiver.X" resolves the CLASS against the
 # manifest namespace (moe.shizuku.manager), not the applicationId. -f 0x20 =
 # FLAG_INCLUDE_STOPPED_PACKAGES as belt-and-suspenders.
-adb shell am broadcast -a $MGR.REPRO188 \
+timeout 30 adb shell am broadcast -a $MGR.REPRO188 \
   -n $MGR/moe.shizuku.manager.receiver.Repro188Receiver \
   -f 0x00000020 | tr -d '\r'
 

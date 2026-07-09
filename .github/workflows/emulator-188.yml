@@ -45,6 +45,12 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Sync canonical harness script (both variants run the same one)
+        run: |
+          git fetch origin claude/code-session-review-vp9clq --depth=1
+          git checkout FETCH_HEAD -- .github/scripts/emulator-188.sh
+          echo "harness script synced from claude/code-session-review-vp9clq"
+
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
