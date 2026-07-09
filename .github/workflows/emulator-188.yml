@@ -32,7 +32,8 @@ jobs:
         variant:
           - { name: fixed,    ref: claude/code-session-review-vp9clq,              expect: clean }
           - { name: baseline, ref: claude/code-session-review-vp9clq-188-baseline, expect: reproduce }
-    name: 188-${{ matrix.variant.name }}
+        api: [30, 36]
+    name: 188-${{ matrix.variant.name }}-api${{ matrix.api }}
     env:
       VARIANT: ${{ matrix.variant.name }}
       EXPECT: ${{ matrix.variant.expect }}
@@ -68,7 +69,7 @@ jobs:
       - name: Run #188 A/B on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           disable-animations: true
@@ -79,6 +80,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: emulator-188-${{ matrix.variant.name }}
+          name: emulator-188-${{ matrix.variant.name }}-api${{ matrix.api }}
           path: logcat.txt
           if-no-files-found: warn
