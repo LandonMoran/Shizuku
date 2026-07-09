@@ -101,6 +101,10 @@ class MainActivity : Activity() {
             appendLine("Wireless-ADB behavior bench")
             appendLine("Android ${Build.VERSION.RELEASE}  SDK ${Build.VERSION.SDK_INT}  (targetSdk 37)")
             appendLine("local-network perm: ${perm ?: "n/a"} granted=${granted ?: "n/a"}")
+            if (perm != null && granted != true) {
+                appendLine(">> On Android 16+: tap 'Request local-network permission' FIRST,")
+                appendLine("   else mDNS/LAN probes are skipped (avoids the connect-a-device picker).")
+            }
             appendLine()
             appendLine("Port (for loopback probe) = Settings > Developer options >")
             append("  Wireless debugging > \"IP address & Port\" (after the colon)")

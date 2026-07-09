@@ -12,6 +12,24 @@ import java.net.NetworkInterface
 import java.net.Socket
 import java.util.Collections
 
+/** The local-network permission that applies on this SDK (null below SDK 36). */
+internal fun lnpPermission(): String? = when {
+    Build.VERSION.SDK_INT >= 37 -> "android.permission.ACCESS_LOCAL_NETWORK"
+    Build.VERSION.SDK_INT >= 36 -> "android.permission.NEARBY_WIFI_DEVICES"
+    else -> null
+}
+
+/**
+ * True when we may safely touch the LAN / run mDNS discovery. Below SDK 36 there is
+ * no gate; on 36/37 we must hold the permission, otherwise the OS intercepts the
+ * call with an endless "choose a device" picker (confirmed on a real Android 17
+ * device). Gated probes must check this and SKIP rather than trigger that storm.
+ */
+internal fun lnpSatisfied(ctx: Context): Boolean {
+    val p = lnpPermission() ?: return true
+    return ctx.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+}
+
 /** Android release / SDK / form factor. Frames every other result. */
 object DeviceInfoProbe : Probe {
     override val id = "device"
@@ -83,6 +101,13 @@ object MdnsTypesProbe : Probe {
     private val types = listOf("_adb._tcp", "_adb-tls-connect._tcp", "_adb-tls-pairing._tcp")
 
     override fun run(ctx: Context, port: Int?): ProbeResult {
+        if (!lnpSatisfied(ctx)) {
+            return ProbeResult(
+                id, title, "SKIP-NEEDS-PERM",
+                "local-network permission not granted; skipping mDNS discovery to avoid the " +
+                    "Android 17 endless connect-a-device picker. Grant it and re-run.",
+            )
+        }
         val nsd = ctx.getSystemService(NsdManager::class.java)
             ?: return ProbeResult(id, title, "ERROR", "no NsdManager")
         val counts = LinkedHashMap<String, Int>()
@@ -127,16 +152,29 @@ object LoopbackConnectProbe : Probe {
         }
         val sb = StringBuilder()
         var loopbackOk = false
-        for ((label, host) in targets()) {
+        // Loopback is never LAN, so it is safe to attempt without the permission --
+        // this is the key A17 question (does adbd accept 127.0.0.1 with no grant?).
+        for ((label, host) in loopbackTargets()) {
             val r = tryConnect(host, port)
-            if (label.startsWith("loopback") && r.startsWith("CONNECTED")) loopbackOk = true
+            if (r.startsWith("CONNECTED")) loopbackOk = true
             sb.append("\n    $label $host:$port -> $r")
+        }
+        // LAN targets would trip Local Network Protection on A17 (endless device
+        // picker) unless the permission is held, so only probe them when it is.
+        if (lnpSatisfied(ctx)) {
+            for ((label, host) in lanTargets()) {
+                sb.append("\n    $label $host:$port -> ${tryConnect(host, port)}")
+            }
+        } else {
+            sb.append("\n    LAN targets skipped (need local-network permission; would trigger the A17 device picker)")
         }
         return ProbeResult(id, title, if (loopbackOk) "LOOPBACK-OK" else "LOOPBACK-FAIL", sb.toString().trim())
     }
 
-    fun targets(): List<Pair<String, String>> {
-        val list = mutableListOf("loopback IPv4" to "127.0.0.1", "loopback IPv6" to "::1")
+    private fun loopbackTargets() = listOf("loopback IPv4" to "127.0.0.1", "loopback IPv6" to "::1")
+
+    private fun lanTargets(): List<Pair<String, String>> {
+        val list = mutableListOf<Pair<String, String>>()
         try {
             NetworkInterface.getNetworkInterfaces().asSequence().forEach { ni ->
                 ni.inetAddresses.asSequence().forEach { a ->
@@ -173,8 +211,8 @@ object Probes {
         AdbPortsProbe,
         AdbSettingsProbe,
         LnpPermissionProbe,
-        MdnsTypesProbe,
         LoopbackConnectProbe,
+        MdnsTypesProbe,
     )
     val headless: List<Probe> = all.filter { it.headlessCapable }
 }
