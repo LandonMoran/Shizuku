@@ -1,10 +1,12 @@
 name: emulator-188
 
-# [repro] #188 behavioral harness. This first iteration validates the BASELINE
-# reproduce path on the current (stock-for-#188) branch: seed a stale/dead
-# persisted ADB TCP port, reboot, drive the real AdbStartWorker, and prove it
-# connects to the dead port directly (skipping discovery). Expands to a fixed vs
-# baseline matrix once the #188 fix + baseline sibling branch exist. Harness-only.
+# [repro] #188 A/B harness. Seeds a stale/dead persisted ADB TCP port, reboots
+# (survives), drives the real AdbStartWorker via the harness receiver, and checks
+# the port decision:
+#   baseline (stock): useStaleDirect=true, resolves+connects to the dead port -> #188
+#   fixed:            useStaleDirect=false, routed to discovery (dead port rejected)
+# Deterministic bug -> a single emulator profile is sufficient (no timing fan-out).
+# Harness-only; lives on claude/code-session-review-vp9clq* branches, never merged.
 on:
   push:
     branches:
@@ -12,6 +14,7 @@ on:
     paths:
       - '.github/workflows/emulator-188.yml'
       - '.github/scripts/emulator-188.sh'
+      - 'manager/src/main/java/moe/shizuku/manager/utils/EnvironmentUtils.kt'
       - 'manager/src/main/java/moe/shizuku/manager/worker/AdbStartWorker.kt'
       - 'manager/src/main/java/moe/shizuku/manager/receiver/Repro188Receiver.kt'
   workflow_dispatch:
@@ -21,17 +24,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  baseline:
+  ab:
     runs-on: ubuntu-latest
-    name: baseline-reproduce
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - { name: fixed,    ref: claude/code-session-review-vp9clq,              expect: clean }
+          - { name: baseline, ref: claude/code-session-review-vp9clq-188-baseline, expect: reproduce }
+    name: 188-${{ matrix.variant.name }}
     env:
-      VARIANT: baseline
-      EXPECT: reproduce
+      VARIANT: ${{ matrix.variant.name }}
+      EXPECT: ${{ matrix.variant.expect }}
     steps:
-      - name: Checkout
+      - name: Checkout ${{ matrix.variant.name }}
         uses: actions/checkout@v6
         with:
-          ref: claude/code-session-review-vp9clq
+          ref: ${{ matrix.variant.ref }}
           submodules: recursive
           fetch-depth: 0
 
@@ -56,7 +65,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Run #188 behavioral repro on emulator
+      - name: Run #188 A/B on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -70,6 +79,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: emulator-188-baseline
+          name: emulator-188-${{ matrix.variant.name }}
           path: logcat.txt
           if-no-files-found: warn
