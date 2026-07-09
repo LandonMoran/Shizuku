@@ -252,6 +252,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- [repro] #237 harness-only trigger; stripped from the fix PR. -->
+        <receiver
+            android:name=".receiver.Repro237Receiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="${applicationId}.REPRO237" />
+            </intent-filter>
+        </receiver>
+
         <receiver android:name=".receiver.NotifAttemptReceiver" />
         <receiver android:name=".receiver.NotifCancelReceiver" />
         <receiver android:name=".receiver.NotifRestoreReceiver" />

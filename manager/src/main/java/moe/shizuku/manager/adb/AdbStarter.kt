@@ -72,6 +72,11 @@ object AdbStarter {
     }
 
     suspend fun stopTcp(context: Context, port: Int) {
+        // [repro] #237: marks every invocation of the TCP teardown. Baseline calls
+        // this from AdbStartWorker on EVERY background start (over-control); the fix
+        // removes that call so teardown happens only on an explicit settings toggle.
+        // Harness-only marker; stripped from the fix PR.
+        android.util.Log.i("REPRO237", "[repro] AdbStarter.stopTcp invoked (port=$port)")
         runCatching {
             val cr = context.contentResolver
             if (context.checkSelfPermission(WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED) {
