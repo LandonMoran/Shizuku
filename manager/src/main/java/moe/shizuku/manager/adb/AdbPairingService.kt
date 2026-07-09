@@ -92,11 +92,16 @@ class AdbPairingService : Service() {
                 onStart()
             }
             replyAction -> {
-                val code = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(remoteInputResultKey) ?: ""
+                // Trim whitespace the inline-reply IME may append: pressing Enter in the
+                // notification RemoteInput inserts a trailing newline, and any such
+                // whitespace becomes part of the SPAKE2 password, so the pairing code is
+                // rejected as "incorrect" (#197).
+                val code = (RemoteInput.getResultsFromIntent(intent)?.getCharSequence(remoteInputResultKey) ?: "")
+                    .toString().trim()
                 val host = intent.getStringExtra(hostKey) ?: "127.0.0.1"
                 val port = intent.getIntExtra(portKey, -1)
                 if (port != -1) {
-                    onInput(code.toString(), host, port)
+                    onInput(code, host, port)
                 } else {
                     onStart()
                 }
