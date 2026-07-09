@@ -1,0 +1,77 @@
+name: adblab-matrix
+
+# [probe] Cross-version ADB behavior bench. Builds the nettest APK and runs the
+# headless probes on an emulator matrix, producing a per-API table (ports,
+# settings, local-network permission, mDNS service types). Android 17 (SDK 37) has
+# no installable emulator image, so real-device runs of the app cover 17; this
+# matrix covers what emulators model. Harness-only; never merged.
+on:
+  push:
+    branches:
+      - claude/code-session-review-vp9clq
+    paths:
+      - '.github/workflows/adblab-matrix.yml'
+      - '.github/scripts/adblab.sh'
+      - 'nettest/**'
+  workflow_dispatch:
+
+concurrency:
+  group: adblab-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 33, 34, 35, 36]
+    name: adblab-api${{ matrix.api }}
+    env:
+      API_LEVEL: ${{ matrix.api }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: claude/code-session-review-vp9clq
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Accept SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build bench APK
+        run: ./gradlew :nettest:assembleDebug --stacktrace
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run bench on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
+          script: bash .github/scripts/adblab.sh
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: adblab-api${{ matrix.api }}
+          path: adblab-results.txt
+          if-no-files-found: warn

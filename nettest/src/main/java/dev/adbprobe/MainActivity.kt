@@ -6,6 +6,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
+import android.util.Log
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
@@ -14,23 +15,16 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import java.net.Inet6Address
-import java.net.InetSocketAddress
-import java.net.NetworkInterface
-import java.net.Socket
 import java.util.concurrent.Executors
 
 /**
- * [probe] Answers one question on a real device: when Wireless debugging is on,
- * does adbd accept a connection on LOOPBACK (127.0.0.1 / ::1), only on the LAN
- * interface, or both -- and does the LAN path trip Android 17 Local Network
- * Protection while loopback does not?
+ * [probe] Wireless-ADB behavior bench. Runs a registry of probes (see [Probes]) and
+ * shows a shareable report stamped with device / Android version.
  *
- * You supply the port shown in Settings > Developer options > Wireless debugging
- * ("IP address & Port", the number after the colon). The app then tries a TCP
- * connect to 127.0.0.1, ::1, and every non-loopback local address on that port and
- * reports which one adbd accepts. Loopback needs no permission; the LAN targets do
- * on SDK 37+, so run once before granting and once after to see the gate.
+ * Interactive: launch normally, optionally type the Wireless-debugging port, tap
+ * "Run all probes".
+ * Headless (CI): `am start -n dev.adbprobe/.MainActivity --ez auto true [--ei port N]`
+ * runs every probe and logs each result under the "ADBLAB" tag for the matrix job.
  */
 class MainActivity : Activity() {
 
@@ -38,6 +32,10 @@ class MainActivity : Activity() {
     private lateinit var portInput: EditText
     private lateinit var results: TextView
     private val exec = Executors.newSingleThreadExecutor()
+
+    companion object {
+        const val TAG = "ADBLAB"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,15 +48,13 @@ class MainActivity : Activity() {
         }
 
         header = TextView(this).apply { setTextIsSelectable(true) }
-
         portInput = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
-            hint = "port from Wireless debugging"
+            hint = "Wireless-debugging port (optional; for loopback probe)"
         }
-
         val runBtn = Button(this).apply {
-            text = "Run probe"
-            setOnClickListener { runProbe() }
+            text = "Run all probes"
+            setOnClickListener { runAll(currentPort()) }
         }
         val permBtn = Button(this).apply {
             text = "Request local-network permission"
@@ -68,24 +64,29 @@ class MainActivity : Activity() {
             text = "Clear"
             setOnClickListener { results.text = ""; refreshHeader() }
         }
-
         results = TextView(this).apply {
             setTextIsSelectable(true)
             typeface = Typeface.MONOSPACE
             textSize = 12f
         }
-        val scroll = ScrollView(this).apply { addView(results) }
 
         root.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(portInput, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(runBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(permBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(clearBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        root.addView(ScrollView(this).apply { addView(results) }, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
 
         setContentView(root)
         refreshHeader()
+
+        if (intent?.getBooleanExtra("auto", false) == true) {
+            val p = intent.getIntExtra("port", -1).takeIf { it in 1..65535 }
+            runAll(p, headlessLog = true)
+        }
     }
+
+    private fun currentPort(): Int? = portInput.text.toString().trim().toIntOrNull()?.takeIf { it in 1..65535 }
 
     private fun lnpPermission(): String? = when {
         Build.VERSION.SDK_INT >= 37 -> "android.permission.ACCESS_LOCAL_NETWORK"
@@ -93,79 +94,34 @@ class MainActivity : Activity() {
         else -> null
     }
 
-    private fun lnpGranted(): Boolean {
-        val p = lnpPermission() ?: return true
-        return checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
-    }
-
     private fun refreshHeader() {
         val perm = lnpPermission()
-        val ifaces = try {
-            targets().joinToString("\n") { "   ${it.first} -> ${it.second}" }
-        } catch (e: Exception) {
-            "   (interface enum error: ${e.message})"
-        }
+        val granted = perm?.let { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
         header.text = buildString {
-            appendLine("ADB Loopback Probe")
+            appendLine("Wireless-ADB behavior bench")
             appendLine("Android ${Build.VERSION.RELEASE}  SDK ${Build.VERSION.SDK_INT}  (targetSdk 37)")
-            appendLine("local-network perm: ${perm ?: "n/a (<SDK 36)"} = ${if (perm == null) "n/a" else lnpGranted()}")
+            appendLine("local-network perm: ${perm ?: "n/a"} granted=${granted ?: "n/a"}")
             appendLine()
-            appendLine("Port = Settings > Developer options > Wireless debugging >")
-            appendLine("       \"IP address & Port\" (number after the colon)")
-            appendLine()
-            appendLine("Targets:")
-            append(ifaces)
+            appendLine("Port (for loopback probe) = Settings > Developer options >")
+            append("  Wireless debugging > \"IP address & Port\" (after the colon)")
         }
     }
 
-    private fun targets(): List<Pair<String, String>> {
-        val list = mutableListOf(
-            "loopback IPv4" to "127.0.0.1",
-            "loopback IPv6" to "::1",
-        )
-        NetworkInterface.getNetworkInterfaces().asSequence().forEach { ni ->
-            ni.inetAddresses.asSequence().forEach { a ->
-                val addr = a.hostAddress ?: return@forEach
-                if (!a.isLoopbackAddress) {
-                    val v = if (a is Inet6Address) "IPv6" else "IPv4"
-                    // strip scope id (e.g. %wlan0) for a clean connect target
-                    list += "LAN ${ni.name} $v" to addr.substringBefore('%')
-                }
-            }
-        }
-        return list.filter { it.second.isNotEmpty() }
-    }
-
-    private fun runProbe() {
-        val port = portInput.text.toString().trim().toIntOrNull()
-        if (port == null || port !in 1..65535) {
-            Toast.makeText(this, "Enter a valid port (1-65535)", Toast.LENGTH_SHORT).show()
-            return
-        }
-        append("\n==== probe :$port   perm-granted=${lnpGranted()} ====")
-        val ts = targets()
+    private fun runAll(port: Int?, headlessLog: Boolean = false) {
+        append("\n==== run @ perm-granted=${lnpPermission()?.let { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED } ?: "n/a"}  port=${port ?: "none"} ====")
         exec.execute {
-            for ((label, host) in ts) {
-                val r = tryConnect(host, port)
-                appendUi("$label\n   $host:$port  ->  $r")
+            for (p in Probes.all) {
+                val r = try {
+                    p.run(this, port)
+                } catch (e: Exception) {
+                    ProbeResult(p.id, p.title, "ERROR", "${e.javaClass.simpleName}: ${e.message}")
+                }
+                if (headlessLog) Log.i(TAG, r.logLine())
+                appendUi(r.pretty())
             }
+            if (headlessLog) Log.i(TAG, "DONE")
             appendUi("---- done ----")
         }
-    }
-
-    private fun tryConnect(host: String, port: Int): String = try {
-        Socket().use { s ->
-            s.connect(InetSocketAddress(host, port), 2500)
-            "CONNECTED  (adbd is listening on this address)"
-        }
-    } catch (e: SecurityException) {
-        "BLOCKED by Local Network Protection (needs local-network permission)"
-    } catch (e: java.net.ConnectException) {
-        "refused: ${e.message}  (nothing bound on this address)"
-    } catch (e: java.net.SocketTimeoutException) {
-        "timeout (filtered / unreachable)"
-    } catch (e: Exception) {
-        "${e.javaClass.simpleName}: ${e.message}"
     }
 
     private fun requestLnp() {
@@ -184,11 +140,6 @@ class MainActivity : Activity() {
         refreshHeader()
     }
 
-    private fun append(line: String) {
-        results.append(line + "\n")
-    }
-
-    private fun appendUi(line: String) {
-        runOnUiThread { append(line) }
-    }
+    private fun append(line: String) { results.append(line + "\n") }
+    private fun appendUi(line: String) { runOnUiThread { append(line) } }
 }
