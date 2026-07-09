@@ -34,7 +34,7 @@ object EnvironmentUtils {
     }
 
     fun isWifiRequired(): Boolean {
-        return (getAdbTcpPort() <= 0 || !ShizukuSettings.getTcpMode())
+        return (getLiveAdbTcpPort() <= 0 || !ShizukuSettings.getTcpMode())
     }
 
     fun isRooted(): Boolean {
@@ -44,6 +44,24 @@ object EnvironmentUtils {
     fun getAdbTcpPort(): Int {
         var port = SystemProperties.getInt("service.adb.tcp.port", -1)
         if (port == -1) port = SystemProperties.getInt("persist.adb.tcp.port", -1)
+        if (port == -1 && isTelevision() && !isTlsSupported()) port = ShizukuSettings.getTcpPort()
+        return port
+    }
+
+    /**
+     * The ADB TCP port that is safe to connect to WITHOUT first re-discovering it
+     * over mDNS. Unlike [getAdbTcpPort], this deliberately excludes
+     * `persist.adb.tcp.port`: that property survives a reboot but adbd does not
+     * necessarily relisten on it, so on boot it is frequently a stale/dead port.
+     * Trusting it there made the start path skip discovery and connect to a dead
+     * port, failing every start until wireless debugging was toggled once (#188).
+     *
+     * `service.adb.tcp.port` is volatile (set only while adbd is actively listening
+     * on TCP), so it is a real liveness signal. Non-TLS TVs cannot use mDNS
+     * discovery, so their configured port stays a valid direct target.
+     */
+    fun getLiveAdbTcpPort(): Int {
+        var port = SystemProperties.getInt("service.adb.tcp.port", -1)
         if (port == -1 && isTelevision() && !isTlsSupported()) port = ShizukuSettings.getTcpPort()
         return port
     }

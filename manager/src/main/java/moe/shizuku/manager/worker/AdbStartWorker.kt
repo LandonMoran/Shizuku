@@ -53,7 +53,11 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
             Settings.Global.putInt(cr, Settings.Global.ADB_ENABLED, 1)
             Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
 
-            val tcpPort = EnvironmentUtils.getAdbTcpPort()
+            // Connect only to a LIVE port; never the possibly-stale persisted one.
+            // getLiveAdbTcpPort() excludes persist.adb.tcp.port (keeping the non-TLS
+            // TV configured-port fallback), so phones route to discovery, TVs use
+            // their configured port, and neither trusts a stale value (#188).
+            val tcpPort = EnvironmentUtils.getLiveAdbTcpPort()
 
             val port = tcpPort.takeIf { !EnvironmentUtils.isWifiRequired() } ?: callbackFlow {
                 val adbMdns = AdbMdns(applicationContext, AdbMdns.TLS_CONNECT) { p ->
