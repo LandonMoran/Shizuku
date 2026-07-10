@@ -96,15 +96,27 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
             // (#188). Probe it off the main thread; direct-connect only if it answers,
             // otherwise re-discover over mDNS instead of launching a doomed start.
             } else {
+                val activity = context.asActivity<FragmentActivity>()
                 scope.launch {
                     val live = EnvironmentUtils.isAdbPortLive("127.0.0.1", tcpPort)
                     withContext(Dispatchers.Main) {
+                        // The probe can take up to a second. `scope` is the Activity's
+                        // lifecycleScope, which is cancelled on destroy but NOT on stop --
+                        // so if the user backgrounded the screen (or a config change saved
+                        // state) during that window, we'd still resume here. Touching the UI
+                        // now would crash: FragmentManager#show throws
+                        // IllegalStateException after onSaveInstanceState, and a background
+                        // startActivity is blocked on Android 10+. Bail; the user can tap
+                        // Start again when they return.
+                        if (activity.isFinishing || activity.supportFragmentManager.isStateSaved) {
+                            return@withContext
+                        }
                         if (live) {
-                            context.startActivity(Intent(context, StarterActivity::class.java).apply {
+                            activity.startActivity(Intent(activity, StarterActivity::class.java).apply {
                                 putExtra(StarterActivity.EXTRA_PORT, tcpPort)
                             })
                         } else {
-                            AdbDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
+                            AdbDialogFragment().show(activity.supportFragmentManager)
                         }
                     }
                 }
