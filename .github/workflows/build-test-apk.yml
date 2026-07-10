@@ -47,3 +47,22 @@ jobs:
           name: shizuku-daily-driver-apk
           path: manager/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  # Delete the dead, un-PR'd branch (proxy blocks a local `git push --delete`,
+  # so do it from the runner). release-api-13.7-tokenfix is intentionally kept:
+  # the api submodule above pins a commit that lives on it.
+  cleanup-dead-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete fix/watchdog-tcp-warning
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/git/refs/heads/fix/watchdog-tcp-warning" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/fix/watchdog-tcp-warning"
+            echo "Deleted fix/watchdog-tcp-warning"
+          else
+            echo "fix/watchdog-tcp-warning already absent"
+          fi

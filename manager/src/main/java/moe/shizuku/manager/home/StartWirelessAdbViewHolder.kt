@@ -102,15 +102,21 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
             // (#188). Probe it off the main thread; direct-connect only if it answers,
             // otherwise re-discover over mDNS instead of launching a doomed start.
             } else {
+                val activity = context.asActivity<FragmentActivity>()
                 scope.launch {
                     val live = EnvironmentUtils.isAdbPortLive("127.0.0.1", tcpPort)
                     withContext(Dispatchers.Main) {
+                        // lifecycleScope survives onStop; bail if state was saved during
+                        // the probe so show()/startActivity can't crash (#188).
+                        if (activity.isFinishing || activity.supportFragmentManager.isStateSaved) {
+                            return@withContext
+                        }
                         if (live) {
-                            context.startActivity(Intent(context, StarterActivity::class.java).apply {
+                            activity.startActivity(Intent(activity, StarterActivity::class.java).apply {
                                 putExtra(StarterActivity.EXTRA_PORT, tcpPort)
                             })
                         } else {
-                            AdbDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
+                            AdbDialogFragment().show(activity.supportFragmentManager)
                         }
                     }
                 }

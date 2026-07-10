@@ -33,7 +33,7 @@
             android:layout_weight="1"
             android:text="@string/app_management_toggle_all"
             android:textAppearance="?textAppearanceBodyLarge"
-            android:textColor="?colorOnSecondaryContainer"
+            android:textColor="?textColorOnSurfaceHighEmphasis"
             android:clickable="false"
             android:focusable="false" />
 
