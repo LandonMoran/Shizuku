@@ -1,0 +1,47 @@
+name: build-test-apk
+
+# Builds a DEBUG manager APK from the combined test branch (13.7.0 + all of
+# today's fixes: #188, #237, #221, #204, #197, watchdog/TCP warning) so it can be
+# sideloaded and tested on a real device. Not a release; harness/test only.
+on:
+  push:
+    branches:
+      - test/all-fixes-2026-07-10
+  workflow_dispatch:
+
+concurrency:
+  group: build-test-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: build-all-fixes-debug-apk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Accept SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build manager debug APK
+        run: ./gradlew :manager:assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: shizuku-all-fixes-debug-apk
+          path: manager/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
