@@ -224,6 +224,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- #221: reconciles "Auto-disable USB debugging" after a reboot. Always
+             enabled (BootCompleteReceiver's enabled state is start-on-boot's source
+             of truth, so it can't be reused); no-ops when the setting is off. -->
+        <receiver
+            android:name=".receiver.AutoDisableUsbDebuggingReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
         <receiver
             android:name=".receiver.ManualStartReceiver"
             android:enabled="true"
