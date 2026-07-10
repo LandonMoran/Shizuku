@@ -53,13 +53,18 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
             Settings.Global.putInt(cr, Settings.Global.ADB_ENABLED, 1)
             Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
 
-            // Connect only to a LIVE port; never the possibly-stale persisted one.
-            // getLiveAdbTcpPort() excludes persist.adb.tcp.port (keeping the non-TLS
-            // TV configured-port fallback), so phones route to discovery, TVs use
-            // their configured port, and neither trusts a stale value (#188).
+            // Connect only to a port adbd is *actually* listening on. getLiveAdbTcpPort()
+            // already drops the possibly-stale persist.adb.tcp.port, but even the live
+            // property can be stale on some ROMs (#188: the reporter's service.adb.tcp.port
+            // held a dead 6776 while every connect failed). So probe the candidate with a
+            // short connect timeout and only take it if it answers; otherwise fall through
+            // to mDNS re-discovery. (Approach thedjchi described on #188.)
             val tcpPort = EnvironmentUtils.getLiveAdbTcpPort()
+            val directPort =
+                if (!EnvironmentUtils.isWifiRequired() && EnvironmentUtils.isAdbPortLive("127.0.0.1", tcpPort))
+                    tcpPort else -1
 
-            val port = tcpPort.takeIf { !EnvironmentUtils.isWifiRequired() } ?: callbackFlow {
+            val port = directPort.takeIf { it > 0 } ?: callbackFlow {
                 val adbMdns = AdbMdns(applicationContext, AdbMdns.TLS_CONNECT) { p ->
                     if (p.second > 0) trySend(p.second)
                 }

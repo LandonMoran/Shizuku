@@ -18,6 +18,7 @@ import androidx.work.WorkManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import moe.shizuku.manager.Helps
 import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.R
@@ -89,12 +90,24 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
                     AdbStarter.stopTcp(context, tcpPort)
                 }
                 AdbDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
-            // Otherwise ADB IS listening to a TCP port and the user wants to keep it open. Start Shizuku via TCP
+            // Otherwise ADB looks like it's listening on a TCP port and the user wants to
+            // keep it open. But the property value alone isn't proof adbd is actually
+            // listening -- on some ROMs service.adb.tcp.port holds a dead port after boot
+            // (#188). Probe it off the main thread; direct-connect only if it answers,
+            // otherwise re-discover over mDNS instead of launching a doomed start.
             } else {
-                val intent = Intent(context, StarterActivity::class.java).apply {
-                    putExtra(StarterActivity.EXTRA_PORT, tcpPort)
+                scope.launch {
+                    val live = EnvironmentUtils.isAdbPortLive("127.0.0.1", tcpPort)
+                    withContext(Dispatchers.Main) {
+                        if (live) {
+                            context.startActivity(Intent(context, StarterActivity::class.java).apply {
+                                putExtra(StarterActivity.EXTRA_PORT, tcpPort)
+                            })
+                        } else {
+                            AdbDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
+                        }
+                    }
                 }
-                context.startActivity(intent)
             }
         }
     }
