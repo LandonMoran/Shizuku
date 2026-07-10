@@ -9,6 +9,10 @@ import android.os.SystemProperties
 import moe.shizuku.manager.ShizukuApplication
 import moe.shizuku.manager.ShizukuSettings
 import com.topjohnwu.superuser.Shell
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.InetSocketAddress
+import java.net.Socket
 
 private val appContext = ShizukuApplication.appContext
 
@@ -64,5 +68,26 @@ object EnvironmentUtils {
         var port = SystemProperties.getInt("service.adb.tcp.port", -1)
         if (port == -1 && isTelevision() && !isTlsSupported()) port = ShizukuSettings.getTcpPort()
         return port
+    }
+
+    /**
+     * Whether adbd is *actually* listening on [port] right now, verified by a real
+     * connect with a short [timeoutMs]. A non-stale property value is still not proof
+     * of liveness: on some ROMs `service.adb.tcp.port` itself holds a dead port after
+     * boot (#188 -- the reporter's returned 6776 while every connect failed). So knock
+     * before trusting it; a refused/dead port returns false and the caller should fall
+     * back to mDNS re-discovery. (Approach thedjchi described on #188: connect with a
+     * timeout to verify the port is valid before taking it.)
+     */
+    suspend fun isAdbPortLive(host: String, port: Int, timeoutMs: Int = 1000): Boolean {
+        if (port <= 0) return false
+        return withContext(Dispatchers.IO) {
+            try {
+                Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs) }
+                true
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 }

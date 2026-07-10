@@ -1,22 +1,24 @@
-name: build-test-apk
+name: build-daily-driver
 
-# Builds a DEBUG manager APK from the combined test branch (13.7.0 + all of
-# today's fixes: #188, #237, #221, #204, #197, watchdog/TCP warning) so it can be
-# sideloaded and tested on a real device. Not a release; harness/test only.
+# Builds a DEBUG manager APK from the daily-driver branch: 13.7.0 + every fix
+# from 2026-07-10 in its FINAL form (#188 probe + #237, #221, #204, #197,
+# #235, #201 both halves, watchdog/TCP warning) with the test-only scaffolding
+# stripped (no #221 boot notification, no #197 pairing-code debug log). Meant
+# to actually daily-drive, not just harness-test. Still a debug APK, not a release.
 on:
   push:
     branches:
-      - test/all-fixes-2026-07-10
+      - daily-driver-2026-07-10
   workflow_dispatch:
 
 concurrency:
-  group: build-test-apk-${{ github.ref }}
+  group: build-daily-driver-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: build-all-fixes-debug-apk
+    name: build-daily-driver-apk
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -42,6 +44,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v6
         with:
-          name: shizuku-all-fixes-debug-apk
+          name: shizuku-daily-driver-apk
           path: manager/build/outputs/apk/debug/*.apk
           if-no-files-found: error

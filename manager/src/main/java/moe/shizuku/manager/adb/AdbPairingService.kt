@@ -92,24 +92,23 @@ class AdbPairingService : Service() {
                 onStart()
             }
             replyAction -> {
-                // Harden the pairing code against anything the inline-reply IME injects,
-                // regardless of how the user submits. The RemoteInput can carry
-                // whitespace anywhere -- pressing Enter appends a newline, autocorrect /
-                // prediction can slip in spaces -- and every such character becomes part
-                // of the SPAKE2 password, so a correct 6-digit code is rejected as
-                // "incorrect" (#197). Strip ALL whitespace, not just the ends (the old
-                // .trim() missed interior spaces and, on some IMEs, submit ordering).
+                // Harden the pairing code against whatever the inline-reply IME injects,
+                // regardless of how the user submits. The RemoteInput can carry whitespace
+                // anywhere -- pressing Enter appends a newline, autocorrect / prediction
+                // can slip in spaces -- and every such character becomes part of the SPAKE2
+                // password, so a correct 6-digit code is rejected as "incorrect" (#197).
+                // Strip ALL whitespace, not just the ends: a plain .trim() missed interior
+                // spaces and, on some IMEs, a submit ordering that left whitespace behind.
                 val raw = (RemoteInput.getResultsFromIntent(intent)?.getCharSequence(remoteInputResultKey) ?: "")
                     .toString()
                 val code = raw.filter { !it.isWhitespace() }
                 val host = intent.getStringExtra(hostKey) ?: "127.0.0.1"
                 val port = intent.getIntExtra(portKey, -1)
-                Log.i(tag, "Pairing reply: rawLen=${raw.length} chars=${raw.map { it.code }} -> codeLen=${code.length} port=$port")
                 when {
                     // An empty code means an accidental or duplicate empty submit: some
                     // IMEs fire a first reply on Enter and then a second, empty one when
-                    // the user also taps Send. Don't overwrite a real in-flight attempt
-                    // with a bogus "pairing failed" -- just re-show the input prompt.
+                    // the user also taps Send. Re-show the input prompt instead of
+                    // clobbering a real in-flight attempt with a bogus "pairing failed".
                     code.isEmpty() && port != -1 -> createInputNotification(host, port)
                     code.isEmpty() -> onStart()
                     port != -1 -> onInput(code, host, port)
