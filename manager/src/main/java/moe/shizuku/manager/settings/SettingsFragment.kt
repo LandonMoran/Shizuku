@@ -206,6 +206,8 @@ class SettingsFragment : PreferenceFragmentCompat(), SharedPreferences.OnSharedP
             }
         }
 
+        refreshWatchdogSummary()
+
         tcpPortPreference.apply {
             isVisible = tcpModePreference.isVisible && tcpModePreference.isChecked
             icon = maybeGetRestartIcon(KEY_TCP_PORT)
@@ -339,6 +341,19 @@ class SettingsFragment : PreferenceFragmentCompat(), SharedPreferences.OnSharedP
         when (key) {
             KEY_WATCHDOG -> watchdogPreference.isChecked = ShizukuSettings.isWatchdogRunning()
         }
+        if (key == KEY_WATCHDOG || key == KEY_TCP_MODE) refreshWatchdogSummary()
+    }
+
+    // Warn when the watchdog is on but TCP mode is off. In that combination the
+    // watchdog can only recover Shizuku over Wi-Fi -- it just re-runs the normal
+    // start, which needs mDNS discovery -- and never on cellular. TCP mode's fixed
+    // loopback port is what makes off-Wi-Fi recovery possible, so surface that.
+    private fun refreshWatchdogSummary() {
+        val base = getString(R.string.settings_watchdog_summary)
+        val warn = watchdogPreference.isChecked && !ShizukuSettings.getTcpMode()
+        watchdogPreference.summary =
+            if (warn) "$base\n\n⚠ ${getString(R.string.settings_watchdog_no_tcp_warning)}"
+            else base
     }
 
     override fun onCreateRecyclerView(
