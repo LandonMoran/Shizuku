@@ -157,6 +157,8 @@
     <string name="settings_start_on_boot">Start on boot</string>
     <string name="settings_start_on_boot_summary">Requires Android 11+ or root</string>
     <string name="settings_start_on_boot_bug">Due to a bug in Android 11-12, wireless debugging does not remember any authorized networks.\n\nYou will need to re-authorize the network on each reboot by tapping \"Allow\" when the authorization dialog pops up.</string>
+    <string name="settings_prefer_direct_connect">Prefer direct connect</string>
+    <string name="settings_prefer_direct_connect_summary">On boot, connect straight to a live local ADB port instead of waiting for Wi-Fi and rediscovering it. Only speeds up legacy TCP ADB (adb tcpip); silently falls back to rediscovery otherwise.</string>
     <string name="settings_use_system_color">Use system theme color</string>
     <string name="settings_watchdog">Watchdog</string>
     <string name="settings_watchdog_summary">Automatically restart Shizuku if it crashes</string>

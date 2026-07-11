@@ -17,6 +17,12 @@
             android:title="@string/settings_start_on_boot" />
 
         <SwitchPreferenceCompat
+            android:key="prefer_direct_connect"
+            android:defaultValue="true"
+            android:title="@string/settings_prefer_direct_connect"
+            android:summary="@string/settings_prefer_direct_connect_summary" />
+
+        <SwitchPreferenceCompat
             android:key="watchdog"
             android:summary="@string/settings_watchdog_summary"
             android:title="@string/settings_watchdog" />

@@ -54,14 +54,23 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
             Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
 
             // Connect only to a port adbd is *actually* listening on. getLiveAdbTcpPort()
-            // already drops the possibly-stale persist.adb.tcp.port, but even the live
-            // property can be stale on some ROMs (#188: the reporter's service.adb.tcp.port
-            // held a dead 6776 while every connect failed). So probe the candidate with a
-            // short connect timeout and only take it if it answers; otherwise fall through
-            // to mDNS re-discovery. (Approach thedjchi described on #188.)
-            val tcpPort = EnvironmentUtils.getLiveAdbTcpPort()
+            // drops the possibly-stale persist.adb.tcp.port, and even the live property can
+            // be stale on some ROMs (#188: the reporter's service.adb.tcp.port held a dead
+            // 6776 while every connect failed). So probe the candidate first and only take it
+            // if it answers; otherwise fall through to mDNS re-discovery.
+            //
+            // "Prefer direct connect" (default on) additionally trusts persist.adb.tcp.port
+            // -- the legacy `adb tcpip` port that survives reboot while service.adb.tcp.port
+            // is cleared -- but ONLY behind the same liveness probe, so a dead persisted port
+            // never dead-ends the start (#188). That restores the fast boot start for those
+            // setups. Off -> the live-only service port, exactly as before.
+            val preferDirect = ShizukuSettings.getPreferDirectConnect() && ShizukuSettings.getTcpMode()
+            val tcpPort =
+                if (preferDirect) EnvironmentUtils.bootProbePort()
+                else EnvironmentUtils.getLiveAdbTcpPort()
             val directPort =
-                if (!EnvironmentUtils.isWifiRequired() && EnvironmentUtils.isAdbPortLive("127.0.0.1", tcpPort))
+                if ((preferDirect || !EnvironmentUtils.isWifiRequired()) &&
+                    EnvironmentUtils.isAdbPortLiveWithRetry("127.0.0.1", tcpPort))
                     tcpPort else -1
 
             val port = directPort.takeIf { it > 0 } ?: callbackFlow {
@@ -210,7 +219,14 @@ class AdbStartWorker(context: Context, params: WorkerParameters) : CoroutineWork
     companion object {
         fun enqueue(context: Context) {
             val cb = Constraints.Builder()
-            if (EnvironmentUtils.isWifiRequired())
+            // Wait for validated Wi-Fi only when there's nothing to connect to directly.
+            // "Prefer direct connect" also counts a persisted `adb tcpip` port so a legacy
+            // setup starts immediately instead of waiting ~30-60s for Wi-Fi; doWork() probes
+            // it before trusting it, so a dead port still falls back to rediscovery.
+            val hasDirectCandidate =
+                ShizukuSettings.getPreferDirectConnect() && ShizukuSettings.getTcpMode() &&
+                    EnvironmentUtils.bootProbePort() > 0
+            if (EnvironmentUtils.isWifiRequired() && !hasDirectCandidate)
                 cb.setRequiredNetworkType(NetworkType.UNMETERED)
             val constraints = cb.build()
 

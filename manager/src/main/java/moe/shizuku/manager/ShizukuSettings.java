@@ -28,6 +28,7 @@ public class ShizukuSettings {
         public static final String KEY_WATCHDOG = "watchdog";
         public static final String KEY_TCP_MODE = "tcp_mode";
         public static final String KEY_TCP_PORT = "tcp_port";
+        public static final String KEY_PREFER_DIRECT_CONNECT = "prefer_direct_connect";
         public static final String KEY_AUTO_DISABLE_USB_DEBUGGING = "auto_disable_usb_debugging";
         public static final String KEY_LANGUAGE = "language";
         public static final String KEY_TRANSLATION = "translation";
@@ -169,6 +170,17 @@ public class ShizukuSettings {
 
     public static boolean getTcpMode() {
         return getPreferences().getBoolean(Keys.KEY_TCP_MODE, true);
+    }
+
+    /**
+     * When true (default), start-on-boot first probes a live local ADB port and
+     * connects to it directly, skipping the wait for a validated Wi-Fi network and
+     * mDNS rediscovery. Only helps legacy `adb tcpip` setups where a real port is
+     * listening on loopback; it silently falls back to rediscovery otherwise. Turn
+     * it off to always rediscover (never auto-dial a local ADB port on boot).
+     */
+    public static boolean getPreferDirectConnect() {
+        return getPreferences().getBoolean(Keys.KEY_PREFER_DIRECT_CONNECT, true);
     }
 
     public static void setTcpMode(boolean enable) {

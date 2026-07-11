@@ -10,6 +10,7 @@ import moe.shizuku.manager.ShizukuApplication
 import moe.shizuku.manager.ShizukuSettings
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -71,6 +72,31 @@ object EnvironmentUtils {
     }
 
     /**
+     * The candidate port for the boot-time *probe-gated* direct connect. Unlike
+     * [getLiveAdbTcpPort], this DELIBERATELY includes `persist.adb.tcp.port`.
+     *
+     * The #188 lesson was "never trust `persist` *blindly*": adbd doesn't always
+     * relisten on it after a reboot, so dialing it without checking dead-ports the
+     * start. But on boot `service.adb.tcp.port` is volatile and cleared, so a legacy
+     * `adb tcpip <port>` user's port survives ONLY in `persist` -- and `init` brings
+     * adbd up on it early, before BOOT_COMPLETED. Gating this value behind a real
+     * liveness probe ([isAdbPortLive]) makes trusting `persist` safe: if adbd never
+     * relistened, the probe simply fails and the caller falls back to mDNS. This is
+     * what restores the fast boot start for those setups without reintroducing #188.
+     *
+     * Only ever use this for the probe gate. Never invent a literal (e.g. 5555) when
+     * no property is set: a bare `connect()` proves only that *something* is
+     * listening, so guessing a port risks a false-positive probe against an unrelated
+     * loopback service. "No property" therefore means "not live" -> mDNS.
+     */
+    fun bootProbePort(): Int {
+        var port = SystemProperties.getInt("service.adb.tcp.port", -1)
+        if (port == -1) port = SystemProperties.getInt("persist.adb.tcp.port", -1)
+        if (port == -1 && isTelevision() && !isTlsSupported()) port = ShizukuSettings.getTcpPort()
+        return port
+    }
+
+    /**
      * Whether adbd is *actually* listening on [port] right now, verified by a real
      * connect with a short [timeoutMs]. A non-stale property value is still not proof
      * of liveness: on some ROMs `service.adb.tcp.port` itself holds a dead port after
@@ -89,5 +115,29 @@ object EnvironmentUtils {
                 false
             }
         }
+    }
+
+    /**
+     * [isAdbPortLive] with a short bounded retry, for the boot probe specifically.
+     * adbd is stopped/restarted several times during boot as USB/auth/TLS state
+     * settles, so at BOOT_COMPLETED a persisted port can be momentarily refused just
+     * before it comes up. A single probe would concede to the slow mDNS path on that
+     * race. Retry a few times with a short backoff; a genuinely dead/absent port
+     * refuses instantly (RST on loopback), so the added cost when there's nothing to
+     * find is ~[attempts] cheap refusals, not [attempts] full timeouts.
+     */
+    suspend fun isAdbPortLiveWithRetry(
+        host: String,
+        port: Int,
+        timeoutMs: Int = 1000,
+        attempts: Int = 3,
+        backoffMs: Long = 200,
+    ): Boolean {
+        if (port <= 0) return false
+        repeat(attempts) { attempt ->
+            if (isAdbPortLive(host, port, timeoutMs)) return true
+            if (attempt < attempts - 1) delay(backoffMs)
+        }
+        return false
     }
 }
