@@ -63,12 +63,6 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
                 Settings.Global.putInt(cr, Settings.Global.ADB_ENABLED, 1)
                 Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
             }
-        
-            val adbEnabled = Settings.Global.getInt(cr, Settings.Global.ADB_ENABLED, 0)
-            if (adbEnabled == 0) {
-                WadbEnableUsbDebuggingDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
-                return
-            }
 
             // #188: the manual Start path direct-connects to this port (the else
             // branch below), so it must be a LIVE port, never the possibly stale
@@ -78,6 +72,18 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
             val tcpPort = EnvironmentUtils.getLiveAdbTcpPort()
             val tcpMode = ShizukuSettings.getTcpMode()
 
+            // #204: the wireless Start path needs WIRELESS debugging, not USB debugging.
+            // Only warn about USB debugging when there is genuinely no ADB access at all
+            // -- no USB debugging, no wireless debugging, and no live TCP port. A
+            // non-privileged read of adb_enabled returns 0 on some ROMs even when USB
+            // debugging is on, which previously blocked a valid wireless start right
+            // after a successful pairing.
+            val adbEnabled = Settings.Global.getInt(cr, Settings.Global.ADB_ENABLED, 0)
+            val adbWifiEnabled = Settings.Global.getInt(cr, "adb_wifi_enabled", 0)
+            if (adbEnabled == 0 && adbWifiEnabled == 0 && tcpPort <= 0) {
+                WadbEnableUsbDebuggingDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
+                return
+            }
             // If ADB is NOT listening to a TCP port and the device doesn't support TLS, inform the user
             if (tcpPort <= 0 && !EnvironmentUtils.isTlsSupported()) {
                 WadbNotEnabledDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
@@ -100,14 +106,8 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
                 scope.launch {
                     val live = EnvironmentUtils.isAdbPortLive("127.0.0.1", tcpPort)
                     withContext(Dispatchers.Main) {
-                        // The probe can take up to a second. `scope` is the Activity's
-                        // lifecycleScope, which is cancelled on destroy but NOT on stop --
-                        // so if the user backgrounded the screen (or a config change saved
-                        // state) during that window, we'd still resume here. Touching the UI
-                        // now would crash: FragmentManager#show throws
-                        // IllegalStateException after onSaveInstanceState, and a background
-                        // startActivity is blocked on Android 10+. Bail; the user can tap
-                        // Start again when they return.
+                        // lifecycleScope survives onStop; bail if state was saved during
+                        // the probe so show()/startActivity can't crash (#188).
                         if (activity.isFinishing || activity.supportFragmentManager.isStateSaved) {
                             return@withContext
                         }
