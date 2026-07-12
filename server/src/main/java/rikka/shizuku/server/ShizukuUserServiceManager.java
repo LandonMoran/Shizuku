@@ -59,6 +59,21 @@ public class ShizukuUserServiceManager extends UserServiceManager {
             }
         }
 
+        // [REPRO] Force the FIRST spawn for a token to fail after a short delay,
+        // to reproduce the drop-vs-rebind finding: a spawn that fails while a
+        // rebind is already waiting on the same record. Instead of the real
+        // backgrounded app_process command (which makes sh exit 0), pipe
+        // "sleep N; exit 7" so startUserService sees a non-zero exit and runs
+        // dropRecordIfNotAttachedLocked. The sleep keeps the spawn in flight long
+        // enough for the driver's unbind(remove=true)+rebind to land on the record
+        // first. Only the first spawn per token fails; a fixed server's respawn
+        // reuses the same token, gets the real command below, and succeeds.
+        if (isReproForceSpawnFail() && reproFailedSpawnTokens.add(token)) {
+            long failDelayMs = reproSpawnFailDelayMs();
+            LOGGER.w("[repro] forcing spawn FAILURE for token=%s (sleep %dms then exit 7) - rebind now to strand a waiter", token, failDelayMs);
+            return "sleep " + Math.max(1L, failDelayMs / 1000L) + "\nexit 7\n";
+        }
+
         String appProcess = "/system/bin/app_process";
         if (use32Bits && new File("/system/bin/app_process32").exists()) {
             appProcess = "/system/bin/app_process32";
@@ -88,6 +103,26 @@ public class ShizukuUserServiceManager extends UserServiceManager {
             return v == null ? REPRO_SPAWN_DELAY_MS : Long.parseLong(v.trim());
         } catch (Exception e) {
             return REPRO_SPAWN_DELAY_MS;
+        }
+    }
+
+    // [REPRO - harness only] Tokens whose first spawn has already been forced to
+    // fail, so only the FIRST spawn per token fails and a fixed server's respawn
+    // (same token) succeeds. add() returns true exactly once per token.
+    private final java.util.Set<String> reproFailedSpawnTokens =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
+    private static boolean isReproForceSpawnFail() {
+        String v = System.getenv("SHIZUKU_REPRO_FORCE_SPAWN_FAIL");
+        return v != null && !v.isEmpty() && !v.equals("0");
+    }
+
+    private static long reproSpawnFailDelayMs() {
+        try {
+            String v = System.getenv("SHIZUKU_REPRO_SPAWN_FAIL_DELAY_MS");
+            return v == null ? 2000L : Long.parseLong(v.trim());
+        } catch (Exception e) {
+            return 2000L;
         }
     }
 

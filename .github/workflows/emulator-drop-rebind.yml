@@ -1,0 +1,102 @@
+name: emulator-drop-rebind
+
+# Isolated test harness. Lives ONLY on claude/repro-* / review branches.
+# Reproduces the drop-vs-rebind finding on the UserService path: a spawn that
+# fails while a rebind is already waiting on the same record. A/B by api submodule:
+#   baseline = Shizuku-API fix-userservice-token-race (dropRecordIfNotAttachedLocked
+#              drops the record -> the waiting rebind is stranded -> HARD FAILURE)
+#   fixed    = Shizuku-API claude/repro-drop-fixed (respawns a still-wanted record
+#              -> the rebind connects -> clean)
+# The manager carries an env-gated force-spawn-fail-once hook; the driver
+# (landonmoran/test @ claude/repro-drop-rebind) runs MODE_DROPREBIND.
+# Never merge this workflow or the repro instrumentation into an upstream PR.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: emulator-drop-rebind-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  droprebind:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - { name: fixed,    api_ref: claude/repro-drop-fixed,        expect: clean }
+          - { name: baseline, api_ref: fix-userservice-token-race,     expect: reproduce }
+        profile:
+          - { name: fast, cores: 4, ram: 4096M, heap: 1024M }
+    name: droprebind-${{ matrix.variant.name }}-${{ matrix.profile.name }}
+    steps:
+      - name: Checkout Shizuku (manager + harness, server under test)
+        uses: actions/checkout@v6
+        with:
+          ref: claude/repro-userservice-drop-api36
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Pin the api submodule to this variant's Shizuku-API ref
+        run: |
+          git -C api fetch origin "${{ matrix.variant.api_ref }}" --depth=1
+          git -C api checkout FETCH_HEAD
+          echo "api submodule now at:"; git -C api log --oneline -1
+
+      - name: Checkout drop-rebind driver app
+        uses: actions/checkout@v6
+        with:
+          repository: landonmoran/test
+          ref: claude/repro-drop-rebind
+          path: stress-app
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Accept SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build manager debug APK (server under test)
+        run: ./gradlew :manager:assembleDebug --stacktrace
+
+      - name: Build driver app APK
+        working-directory: stress-app
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run drop-rebind test on emulator (Android 16 / API 36)
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          VARIANT: ${{ matrix.variant.name }}
+          EXPECT: ${{ matrix.variant.expect }}
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: ${{ matrix.profile.cores }}
+          ram-size: ${{ matrix.profile.ram }}
+          heap-size: ${{ matrix.profile.heap }}
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
+          script: bash .github/scripts/emulator-drop-rebind.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: droprebind-${{ matrix.variant.name }}-${{ matrix.profile.name }}
+          path: |
+            logcat.txt
+            stress_results.log
+          if-no-files-found: warn
