@@ -24,12 +24,6 @@ public class ServiceStarter {
 
     private static final String EXTRA_BINDER = "moe.shizuku.privileged.api.intent.extra.BINDER";
 
-    // Backoff (ms) between getContentProviderExternal retries when the manager's
-    // provider is momentarily unpublished (process cached/frozen or still
-    // starting). One lookup happens before the first sleep, so this is 4 retries
-    // for 5 total attempts and ~3.25s of added wait at most. See #201.
-    private static final long[] NULL_PROVIDER_RETRY_BACKOFF_MS = {250, 500, 1000, 1500};
-
     public static final String DEBUG_ARGS;
 
     static {
@@ -102,11 +96,12 @@ public class ServiceStarter {
         Log.i(TAG, "service exited");
     }
 
-    // [REPRO - harness only] Force the manager-provider lookup to return null for
-    // the first N attempts, simulating a frozen/unpublished manager ShizukuProvider
-    // (the #201 provider-null condition). N comes from SHIZUKU_REPRO_FORCE_NULL,
-    // which the harness sets on the server and the server propagates into this
-    // spawned process. 0/unset = normal behaviour. Never merge to a release/PR.
+    // [REPRO - harness only] Baseline instrumentation. Reads SHIZUKU_REPRO_FORCE_NULL
+    // (set by the harness on the server, inherited by this spawned process) so the
+    // STOCK, no-retry starter is driven onto its provider-null give-up path on
+    // demand. This is the ONLY change from stock 13.7.0 ServiceStarter: it forces
+    // the null; it does NOT add the #239 retry. That is the point -- this branch
+    // must REPRODUCE #201. Never merge to a release/PR.
     private static int reproForceNullProvider() {
         try {
             String v = System.getenv("SHIZUKU_REPRO_FORCE_NULL");
@@ -126,40 +121,20 @@ public class ServiceStarter {
         IContentProvider provider = null;
 
         try {
-            // The manager app's ShizukuProvider may not be published at the moment
-            // we look it up: its process can be cached/frozen (commonly under
-            // battery optimization) or still starting, in which case
-            // getContentProviderExternal returns null. Previously we gave up and
-            // returned false immediately, which made main() exit(1) and left the
-            // spawned UserService unable to (re)connect until Shizuku was restarted
-            // (issue #201). Retry the lookup a few times with a short backoff so a
-            // momentarily unavailable manager can resolve on its own.
-            //
-            // Unlike the "provider is dead" path below, do NOT force-stop the
-            // manager here: there is no stale provider record to clear, and killing
-            // a merely-frozen manager can push it into the stopped state and make
-            // the provider unavailable for good.
+            // [REPRO] Force the lookup null so the stock path below gives up. The
+            // log string matches the fixed variant's ("forcing provider null") so
+            // the harness registers that the trigger fired.
             int reproForceNull = reproForceNullProvider();
-            for (int attempt = 0; ; attempt++) {
-                if (attempt < reproForceNull) {
-                    Log.w(TAG, String.format("[repro] forcing provider null (attempt %d/%d) to exercise the retry", attempt + 1, reproForceNull));
-                    provider = null;
-                } else {
-                    provider = ActivityManagerApis.getContentProviderExternal(name, userId, null, name);
-                }
-                if (provider != null) {
-                    break;
-                }
-                if (attempt >= NULL_PROVIDER_RETRY_BACKOFF_MS.length) {
-                    Log.e(TAG, String.format("provider is null %s %d (gave up after %d attempts)", name, userId, attempt + 1));
-                    return false;
-                }
-                long backoff = NULL_PROVIDER_RETRY_BACKOFF_MS[attempt];
-                Log.w(TAG, String.format("provider is null %s %d, retrying in %dms (attempt %d/%d)",
-                        name, userId, backoff, attempt + 1, NULL_PROVIDER_RETRY_BACKOFF_MS.length + 1));
-                Thread.sleep(backoff);
+            if (reproForceNull > 0) {
+                Log.w(TAG, String.format("[repro] forcing provider null (attempt 1/%d) to exercise the stock give-up", reproForceNull));
+                provider = null;
+            } else {
+                provider = ActivityManagerApis.getContentProviderExternal(name, userId, null, name);
             }
-
+            if (provider == null) {
+                Log.e(TAG, String.format("provider is null %s %d", name, userId));
+                return false;
+            }
             if (!provider.asBinder().pingBinder()) {
                 Log.e(TAG, String.format("provider is dead %s %d", name, userId));
 
