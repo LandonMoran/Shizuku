@@ -11,6 +11,13 @@ name: emulator-drop-rebind
 # (landonmoran/test @ claude/repro-drop-rebind) runs MODE_DROPREBIND.
 # Never merge this workflow or the repro instrumentation into an upstream PR.
 on:
+  push:
+    branches:
+      - claude/repro-userservice-drop-api36
+    paths:
+      - '.github/workflows/emulator-drop-rebind.yml'
+      - '.github/scripts/emulator-drop-rebind.sh'
+      - 'server/**'
   workflow_dispatch:
 
 concurrency:
