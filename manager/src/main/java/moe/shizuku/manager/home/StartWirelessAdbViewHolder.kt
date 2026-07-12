@@ -18,6 +18,7 @@ import androidx.work.WorkManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import moe.shizuku.manager.Helps
 import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.R
@@ -62,8 +63,13 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
                 Settings.Global.putInt(cr, Settings.Global.ADB_ENABLED, 1)
                 Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
             }
-        
-            val tcpPort = EnvironmentUtils.getAdbTcpPort()
+
+            // #188: the manual Start path direct-connects to this port (the else
+            // branch below), so it must be a LIVE port, never the possibly stale
+            // persist.adb.tcp.port. getLiveAdbTcpPort() excludes that persisted
+            // fallback (keeping the non-TLS-TV configured-port fallback), so on boot
+            // we route to mDNS rediscovery instead of dialing a dead port.
+            val tcpPort = EnvironmentUtils.getLiveAdbTcpPort()
             val tcpMode = ShizukuSettings.getTcpMode()
 
             // #204: the wireless Start path needs WIRELESS debugging, not USB debugging.
@@ -78,7 +84,6 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
                 WadbEnableUsbDebuggingDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
                 return
             }
-
             // If ADB is NOT listening to a TCP port and the device doesn't support TLS, inform the user
             if (tcpPort <= 0 && !EnvironmentUtils.isTlsSupported()) {
                 WadbNotEnabledDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
@@ -91,12 +96,30 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
                     AdbStarter.stopTcp(context, tcpPort)
                 }
                 AdbDialogFragment().show(context.asActivity<FragmentActivity>().supportFragmentManager)
-            // Otherwise ADB IS listening to a TCP port and the user wants to keep it open. Start Shizuku via TCP
+            // Otherwise ADB looks like it's listening on a TCP port and the user wants to
+            // keep it open. But the property value alone isn't proof adbd is actually
+            // listening -- on some ROMs service.adb.tcp.port holds a dead port after boot
+            // (#188). Probe it off the main thread; direct-connect only if it answers,
+            // otherwise re-discover over mDNS instead of launching a doomed start.
             } else {
-                val intent = Intent(context, StarterActivity::class.java).apply {
-                    putExtra(StarterActivity.EXTRA_PORT, tcpPort)
+                val activity = context.asActivity<FragmentActivity>()
+                scope.launch {
+                    val live = EnvironmentUtils.isAdbPortLive("127.0.0.1", tcpPort)
+                    withContext(Dispatchers.Main) {
+                        // lifecycleScope survives onStop; bail if state was saved during
+                        // the probe so show()/startActivity can't crash (#188).
+                        if (activity.isFinishing || activity.supportFragmentManager.isStateSaved) {
+                            return@withContext
+                        }
+                        if (live) {
+                            activity.startActivity(Intent(activity, StarterActivity::class.java).apply {
+                                putExtra(StarterActivity.EXTRA_PORT, tcpPort)
+                            })
+                        } else {
+                            AdbDialogFragment().show(activity.supportFragmentManager)
+                        }
+                    }
                 }
-                context.startActivity(intent)
             }
         }
     }
