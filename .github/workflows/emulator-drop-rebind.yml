@@ -31,8 +31,11 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - { name: fixed,    api_ref: claude/repro-drop-fixed,        expect: clean }
-          - { name: baseline, api_ref: fix-userservice-token-race,     expect: reproduce }
+          # Manager-compatible API lineage (release-api-13.7-tokenfix layout, builds
+          # as a submodule). baseline HEAD is the drop-on-failure code; fixed adds the
+          # respawn-if-waiting patch. The standalone AGP-9 branches don't build here.
+          - { name: fixed,    api_ref: claude/repro-drop-fixed-13.7,   expect: clean }
+          - { name: baseline, api_ref: release-api-13.7-tokenfix,      expect: reproduce }
         profile:
           - { name: fast, cores: 4, ram: 4096M, heap: 1024M }
     name: droprebind-${{ matrix.variant.name }}-${{ matrix.profile.name }}
