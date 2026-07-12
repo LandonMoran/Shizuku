@@ -59,6 +59,20 @@ The workflow encodes the expectation per-variant and the harness script
 *asserts* it (see "Exit codes are assertions" below). We keep the baseline as a
 sibling branch (`…-baseline`) so both build from real history, not a flag.
 
+> **Keep the `fixed` variant current — re-sync it before every run.** An A/B
+> only proves something about the code the `fixed` job *actually builds*. The
+> **`baseline` never changes** — it's stock, pre-fix code whose only job is to
+> reproduce, so freeze it: once it reproduces, it always will, and you never
+> need to touch it again. But the **`fixed` variant must incorporate the latest
+> fix, re-checked every single run.** If the fix moved since the harness last
+> built it — new commits on the fix branch, a converged or rebased branch (e.g.
+> a hand-merge of two PRs that touch one file, like #244+#247), a bumped API
+> submodule pin, a freshly resolved conflict — then the harness's `fixed`
+> checkout is **stale**, and a green proves an *old* version, not what ships.
+> Before you trust a `fixed` pass: diff the harness's `fixed` sources against
+> the real fix branch, or re-point/re-sync the checkout to it. "Fixed passed"
+> has to mean *this* fix passed.
+
 We also fan out across **emulator profiles** (`fast`/`medium`/`slow` — varying
 cores/RAM/heap) so a timing bug that only shows on a starved device still gets
 caught. See the matrix in `.github/workflows/emulator-201-providernull.yml`.
@@ -298,6 +312,9 @@ frozen on exactly what they were given.
       `fail-fast: false`, profile matrix, `if: always()` artifacts
 - [ ] Harness script *asserts* per-variant expectation via exit code, with
       guards against false greens (trigger-fired + enough work)
+- [ ] **Re-sync the `fixed` variant to the current fix before running** (new
+      commits / converged or rebased branch / submodule bump); leave `baseline`
+      frozen — "fixed passed" must mean *this* fix passed
 - [ ] Run A/B: baseline must reproduce, fixed must be clean, across profiles
 - [ ] On red: read the artifact, separate harness artifact from real failure,
       re-run before believing
